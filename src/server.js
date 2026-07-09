@@ -3,6 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditTargets } from './index.js';
+import { generateScenarioSteps } from './ai/steps.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -46,6 +47,11 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && url.pathname === '/api/steps') {
+      await handleGenerateSteps(request, response);
+      return;
+    }
+
     if (request.method === 'GET' && url.pathname.startsWith('/reports/')) {
       await serveFile(response, REPORTS_DIR, decodeURIComponent(url.pathname.replace(/^\/reports\//, '')));
       return;
@@ -78,7 +84,7 @@ server.listen(PORT, () => {
 
 async function handleAudit(request, response) {
   const payload = await readJsonBody(request);
-  const target = normalizeAuditPayload(payload);
+  const target = await normalizeAuditPayload(payload);
 
   const result = await auditTargets([target], {
     outDir: REPORTS_DIR,
@@ -107,7 +113,37 @@ async function handleAudit(request, response) {
   });
 }
 
-function normalizeAuditPayload(payload) {
+async function handleGenerateSteps(request, response) {
+  const payload = await readJsonBody(request);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Request body must be JSON.');
+  }
+  const task = String(payload.task || payload.stepPrompt || '').trim();
+  const plan = await generateScenarioSteps({
+    instruction: task,
+    target: {
+      url: normalizeOptionalUrl(payload.url),
+      name: String(payload.name || payload.url || ''),
+      notes: String(payload.notes || ''),
+    },
+  }, {
+    enabled: normalizeAiOptions(payload.ai).enabled,
+  });
+  sendJson(response, 200, { ok: true, plan });
+}
+
+function normalizeOptionalUrl(value) {
+  if (!value) {
+    return '';
+  }
+  try {
+    return new URL(value).href;
+  } catch {
+    return String(value);
+  }
+}
+
+async function normalizeAuditPayload(payload) {
   if (!payload || typeof payload !== 'object') {
     throw new Error('Request body must be JSON.');
   }
@@ -121,11 +157,47 @@ function normalizeAuditPayload(payload) {
     throw new Error('url must use http, https, or file protocol.');
   }
 
+  const stepPlan = await resolveStepPlan(payload, {
+    url: parsedUrl.href,
+    name: String(payload.name || payload.url),
+    notes: String(payload.notes || ''),
+  });
+
   return {
     url: parsedUrl.href,
     name: String(payload.name || payload.url),
     notes: String(payload.notes || ''),
-    steps: normalizeSteps(payload.steps),
+    task: stepPlan.task,
+    stepPlan,
+    steps: normalizeSteps(stepPlan.steps),
+  };
+}
+
+async function resolveStepPlan(payload, target) {
+  const manualSteps = normalizeSteps(payload.steps);
+  const task = String(payload.task || payload.stepPrompt || '').trim();
+  if (!task) {
+    return {
+      provider: 'manual',
+      task: '',
+      confidence: manualSteps.length ? 'high' : 'low',
+      assumptions: [],
+      warnings: [],
+      steps: manualSteps,
+    };
+  }
+
+  const generated = await generateScenarioSteps({
+    instruction: task,
+    target,
+  }, {
+    enabled: normalizeAiOptions(payload.ai).enabled,
+  });
+
+  return {
+    ...generated,
+    steps: manualSteps.length ? manualSteps : generated.steps,
+    manualOverride: manualSteps.length > 0,
   };
 }
 

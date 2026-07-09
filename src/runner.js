@@ -19,7 +19,7 @@ const WCAG_22_AA_TAGS = [
 
 export async function runTargetAudit(page, target, options = {}) {
   await page.goto(target.url, { waitUntil: 'networkidle' });
-  await runScenarioSteps(page, target.steps);
+  const scenarioExecution = await runScenarioSteps(page, target.steps);
 
   const stamp = nowStamp();
   const runName = `${slugify(target.name)}-${stamp}`;
@@ -67,6 +67,12 @@ export async function runTargetAudit(page, target, options = {}) {
       generatedAt: new Date().toISOString(),
       baseline: 'WCAG 2.2 AA',
       target,
+      taskConclusion: buildTaskConclusion({
+        target,
+        issues,
+        scenarioExecution,
+        finalUrl: page.url(),
+      }),
       artifacts: {
         screenshot: 'screenshot.png',
         domSnapshot: 'dom-snapshot.html',
@@ -93,21 +99,157 @@ export async function runTargetAudit(page, target, options = {}) {
 }
 
 async function runScenarioSteps(page, steps = []) {
+  const log = [];
   for (const step of steps) {
+    const startedAt = Date.now();
     if (step.action === 'fill') {
-      await page.fill(step.selector, step.value || '');
+      await fillStep(page, step);
     } else if (step.action === 'click') {
-      await page.click(step.selector);
+      await clickStep(page, step);
     } else if (step.action === 'press') {
       await page.keyboard.press(step.key);
     } else if (step.action === 'waitForSelector') {
-      await page.waitForSelector(step.selector, { timeout: step.timeout || 5000 });
+      await waitForSelectorStep(page, step);
     } else if (step.action === 'wait') {
       await page.waitForTimeout(step.ms || 1000);
     } else {
       throw new Error(`Unsupported scenario step action: ${step.action}`);
     }
+    log.push({
+      action: step.action,
+      description: step.description || '',
+      selector: step.selector || '',
+      elapsedMs: Date.now() - startedAt,
+    });
   }
+  return log;
+}
+
+async function fillStep(page, step) {
+  const selectors = selectorCandidates(step);
+  for (const selector of selectors) {
+    try {
+      await page.fill(selector, step.value || '', { timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  if (step.label) {
+    try {
+      await page.getByLabel(step.label).fill(step.value || '', { timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Continue to the final error.
+    }
+  }
+
+  throw new Error(`Unable to fill step: ${step.description || step.selector || step.label || 'unknown field'}`);
+}
+
+async function clickStep(page, step) {
+  const selectors = selectorCandidates(step);
+  for (const selector of selectors) {
+    try {
+      await page.click(selector, { timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  if (step.role && step.name) {
+    try {
+      await page.getByRole(step.role, { name: step.name }).click({ timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Continue to text fallback.
+    }
+  }
+
+  if (step.text || step.name) {
+    try {
+      await page.getByText(step.text || step.name).first().click({ timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Continue to the final error.
+    }
+  }
+
+  throw new Error(`Unable to click step: ${step.description || step.selector || step.name || 'unknown control'}`);
+}
+
+async function waitForSelectorStep(page, step) {
+  const selectors = selectorCandidates(step);
+  for (const selector of selectors) {
+    try {
+      await page.waitForSelector(selector, { timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  if (step.text || step.name) {
+    try {
+      await page.getByText(step.text || step.name).first().waitFor({ timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Continue to the final error.
+    }
+  }
+
+  throw new Error(`Unable to wait for step: ${step.description || step.selector || step.text || 'unknown target'}`);
+}
+
+function selectorCandidates(step) {
+  return Array.from(new Set([
+    step.selector,
+    ...(Array.isArray(step.selectors) ? step.selectors : []),
+  ].filter(Boolean).map(String)));
+}
+
+function buildTaskConclusion({ target, issues, scenarioExecution, finalUrl }) {
+  if (!target.task && !scenarioExecution.length) {
+    return null;
+  }
+
+  const blockerCount = issues.filter((issue) => issue.severity === 'Blocker').length;
+  const majorCount = issues.filter((issue) => issue.severity === 'Major').length;
+  const status = blockerCount ? 'blocked' : majorCount ? 'needs-fix' : 'pass-with-review';
+  const label = {
+    blocked: '任务未通过',
+    'needs-fix': '任务需修复后通过',
+    'pass-with-review': '任务可通过，建议人工抽样复核',
+  }[status];
+
+  return {
+    task: target.task || target.stepPlan?.task || '',
+    status,
+    label,
+    verdict: buildTaskVerdict({ blockerCount, majorCount, stepCount: scenarioExecution.length }),
+    generatedBy: target.stepPlan?.provider || 'manual',
+    confidence: target.stepPlan?.confidence || 'medium',
+    assumptions: target.stepPlan?.assumptions || [],
+    warnings: target.stepPlan?.warnings || [],
+    steps: scenarioExecution,
+    finalUrl,
+  };
+}
+
+function buildTaskVerdict({ blockerCount, majorCount, stepCount }) {
+  const prefix = stepCount
+    ? `已自动执行 ${stepCount} 个任务步骤并在最终状态完成审计。`
+    : '未执行前置任务步骤，已直接审计目标页面。';
+
+  if (blockerCount) {
+    return `${prefix} 当前存在 ${blockerCount} 个阻断级问题，不建议验收通过。`;
+  }
+  if (majorCount) {
+    return `${prefix} 当前存在 ${majorCount} 个严重问题，需要修复后再验收。`;
+  }
+  return `${prefix} 自动规则未发现阻断或严重问题，但仍建议对读屏朗读和真实业务语境做人工抽样。`;
 }
 
 async function attachAxeNodeRects(page, axe) {

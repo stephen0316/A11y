@@ -10,7 +10,7 @@ import {
   Loader2,
   Play,
   Plus,
-  RotateCcw,
+  Sparkles,
   X,
 } from 'lucide-react';
 import { Badge } from './components/ui/badge.jsx';
@@ -42,9 +42,21 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from './components/ui/tooltip.jsx';
+import { MoveRightIcon } from './components/ui/move-right-icon.jsx';
 import { cn } from './lib/utils.js';
 
 const LAST_AUDIT_KEY = 'a11y:lastAuditReport';
+const AUDIT_DRAFT_KEY = 'a11y:auditDraft';
+const DEFAULT_AUDIT_FORM = {
+  url: '',
+  name: '',
+  notes: '',
+  advancedTaskEnabled: false,
+  task: '',
+  viewport: '1440x1000',
+  maxTabs: '30',
+  aiEnabled: true,
+};
 
 const viewportOptions = [
   { value: '1440x1000', label: '桌面 1440×1000' },
@@ -133,21 +145,71 @@ function BackToTopButton() {
   );
 }
 
+function NewAuditIcon({ className }) {
+  return (
+    <svg className={className} width="24" height="24" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M24.0605 10L24.0239 38" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 24L38 24" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function readAuditDraft() {
+  const fallback = { form: { ...DEFAULT_AUDIT_FORM }, steps: [] };
+  try {
+    const saved = localStorage.getItem(AUDIT_DRAFT_KEY);
+    if (!saved) {
+      return fallback;
+    }
+    const draft = JSON.parse(saved);
+    return {
+      form: {
+        ...DEFAULT_AUDIT_FORM,
+        ...(draft?.form && typeof draft.form === 'object' ? draft.form : {}),
+        aiEnabled: draft?.form?.aiEnabled === undefined ? DEFAULT_AUDIT_FORM.aiEnabled : Boolean(draft.form.aiEnabled),
+        advancedTaskEnabled: Boolean(draft?.form?.advancedTaskEnabled),
+      },
+      steps: Array.isArray(draft?.steps) ? draft.steps.map(normalizeDraftStep).filter(Boolean) : [],
+    };
+  } catch {
+    localStorage.removeItem(AUDIT_DRAFT_KEY);
+    return fallback;
+  }
+}
+
+function normalizeDraftStep(step) {
+  if (!step || typeof step !== 'object') {
+    return null;
+  }
+  const actionValues = new Set(actionOptions.map((option) => option.value));
+  return {
+    id: step.id || crypto.randomUUID(),
+    action: actionValues.has(step.action) ? step.action : 'click',
+    selector: String(step.selector || ''),
+    selectors: Array.isArray(step.selectors) ? step.selectors.map(String).filter(Boolean) : [],
+    value: String(step.value || ''),
+    key: String(step.key || ''),
+    role: String(step.role || ''),
+    name: String(step.name || ''),
+    label: String(step.label || ''),
+    text: String(step.text || ''),
+    description: String(step.description || ''),
+    ms: step.ms === undefined ? '' : String(step.ms),
+    timeout: step.timeout === undefined ? '' : String(step.timeout),
+  };
+}
+
 function AuditPage() {
-  const [form, setForm] = React.useState({
-    url: '',
-    name: '',
-    notes: '',
-    viewport: '1440x1000',
-    maxTabs: '30',
-    aiEnabled: true,
-  });
-  const [steps, setSteps] = React.useState([]);
+  const draft = React.useMemo(() => readAuditDraft(), []);
+  const [form, setForm] = React.useState(draft.form);
+  const [steps, setSteps] = React.useState(draft.steps);
   const [audit, setAudit] = React.useState(null);
   const [links, setLinks] = React.useState(null);
   const [severityFilter, setSeverityFilter] = React.useState('all');
   const [loading, setLoading] = React.useState(false);
+  const [generatingSteps, setGeneratingSteps] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [stepPlan, setStepPlan] = React.useState(null);
   const [screenshotTarget, setScreenshotTarget] = React.useState(null);
 
   React.useEffect(() => {
@@ -159,15 +221,24 @@ function AuditPage() {
       const report = JSON.parse(saved);
       setAudit(report.audit || null);
       setLinks(report.links || null);
+      setStepPlan(report.audit?.meta?.target?.stepPlan || null);
     } catch {
       localStorage.removeItem(LAST_AUDIT_KEY);
     }
   }, []);
 
+  React.useEffect(() => {
+    localStorage.setItem(AUDIT_DRAFT_KEY, JSON.stringify({ form, steps }));
+  }, [form, steps]);
+
   async function runAudit(event) {
     event.preventDefault();
     setError('');
     setLoading(true);
+    setAudit(null);
+    setLinks(null);
+    setSeverityFilter('all');
+    setScreenshotTarget(null);
 
     try {
       const response = await fetch('/api/audit', {
@@ -177,9 +248,12 @@ function AuditPage() {
           ...form,
           maxTabs: Number(form.maxTabs || 30),
           ai: { enabled: Boolean(form.aiEnabled) },
-          steps: steps
-            .filter((step) => step.selector || step.value)
-            .map(normalizeStepPayload),
+          task: form.advancedTaskEnabled ? form.task : '',
+          steps: form.advancedTaskEnabled
+            ? steps
+              .filter((step) => step.selector || step.value || step.key || step.name || step.text)
+              .map(normalizeStepPayload)
+            : [],
         }),
       });
       const data = await readJsonResponse(response);
@@ -188,6 +262,7 @@ function AuditPage() {
       }
       setAudit(data.report.audit);
       setLinks(data.report.links);
+      setStepPlan(data.report.audit?.meta?.target?.stepPlan || null);
       localStorage.setItem(LAST_AUDIT_KEY, JSON.stringify(data.report));
     } catch (runError) {
       setError(runError.message || '审计失败');
@@ -198,10 +273,44 @@ function AuditPage() {
 
   function startNewAudit() {
     localStorage.removeItem(LAST_AUDIT_KEY);
+    localStorage.removeItem(AUDIT_DRAFT_KEY);
+    setForm(DEFAULT_AUDIT_FORM);
+    setSteps([]);
+    setStepPlan(null);
     setAudit(null);
     setLinks(null);
     setSeverityFilter('all');
     setError('');
+    setScreenshotTarget(null);
+  }
+
+  async function generateSteps() {
+    setError('');
+    setGeneratingSteps(true);
+    try {
+      const response = await fetch('/api/steps', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          url: form.url,
+          name: form.name,
+          notes: form.notes,
+          task: form.task,
+          ai: { enabled: Boolean(form.aiEnabled) },
+        }),
+      });
+      const data = await readJsonResponse(response);
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || '步骤生成失败');
+      }
+      const plan = data.plan || null;
+      setStepPlan(plan);
+      setSteps((plan?.steps || []).map((step) => normalizeDraftStep({ ...step, id: crypto.randomUUID() })).filter(Boolean));
+    } catch (stepError) {
+      setError(stepError.message || '步骤生成失败');
+    } finally {
+      setGeneratingSteps(false);
+    }
   }
 
   const filteredIssues = React.useMemo(() => {
@@ -218,7 +327,7 @@ function AuditPage() {
         </div>
         <div className="hero-actions">
           <Button type="button" variant="secondary" onClick={startNewAudit}>
-            <RotateCcw className="h-4 w-4" />
+            <NewAuditIcon className="h-4 w-4" />
             新建审计
           </Button>
           <Button asChild variant="secondary">
@@ -315,8 +424,36 @@ function AuditPage() {
             </fieldset>
 
             <fieldset>
-              <legend>页面操作步骤</legend>
-              <p className="field-hint">用于先进入要验收的状态，比如登录、打开新增弹窗、提交表单后检查 toast。简单页面可以不填。</p>
+              <legend>自然语言任务</legend>
+              <p className="field-hint">描述要验收的业务路径，例如“输入邮箱 qa@example.com 和密码 test123，点击登录”。系统会自动解析成具体步骤。</p>
+              <Field label="任务路径" htmlFor="target-task">
+                <Textarea
+                  id="target-task"
+                  name="task"
+                  placeholder="例如：打开新增弹窗，填写名称为测试项目，提交表单，等待成功 toast"
+                  value={form.task}
+                  onChange={(event) => setForm({ ...form, task: event.target.value })}
+                />
+              </Field>
+              <div className="task-actions">
+                <Button type="button" variant="secondary" onClick={generateSteps} disabled={generatingSteps || !form.task.trim()}>
+                  {generatingSteps ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  {generatingSteps ? '生成中' : '生成步骤'}
+                </Button>
+                <span>{stepPlan ? stepPlanLabel(stepPlan) : '可先生成预览，也可以直接开始审计。'}</span>
+              </div>
+              {stepPlan?.assumptions?.length || stepPlan?.warnings?.length ? (
+                <div className="step-plan-note">
+                  {[...(stepPlan.assumptions || []), ...(stepPlan.warnings || [])].slice(0, 3).map((item) => (
+                    <p key={item}>{item}</p>
+                  ))}
+                </div>
+              ) : null}
+            </fieldset>
+
+            <fieldset>
+              <legend>生成步骤预览</legend>
+              <p className="field-hint">展示 AI 或本地规则生成的可执行步骤。需要时可以微调选择器和值，非必填。</p>
               <div className="step-list">
                 {steps.map((step, index) => (
                   <div className="step-row" key={step.id}>
@@ -343,13 +480,14 @@ function AuditPage() {
                     />
                     <Input
                       aria-label={`第 ${index + 1} 步值`}
-                      placeholder="值"
-                      value={step.value}
-                      onChange={(event) => updateStep(steps, setSteps, index, { value: event.target.value })}
+                      placeholder={stepValuePlaceholder(step.action)}
+                      value={stepInputValue(step)}
+                      onChange={(event) => updateStep(steps, setSteps, index, valuePatchForStep(step.action, event.target.value))}
                     />
                     <Button type="button" variant="ghost" size="icon" aria-label={`删除第 ${index + 1} 步`} onClick={() => setSteps(steps.filter((_, stepIndex) => stepIndex !== index))}>
                       <X className="h-4 w-4" />
                     </Button>
+                    {step.description ? <p className="step-description">{step.description}</p> : null}
                   </div>
                 ))}
               </div>
@@ -376,10 +514,16 @@ function AuditPage() {
         <section className="result-panel">
           <PanelHeader
             title="本次审计结果"
-            action={audit && links ? <ExportMenu links={links} /> : null}
+            action={!loading && audit && links ? <ExportMenu links={links} /> : null}
           />
           <div className="result-content">
-            {audit ? (
+            {loading ? (
+              <EmptyState
+                title="正在生成审计报告"
+                description="稍等片刻，正在检测目标页面"
+                loading
+              />
+            ) : audit ? (
               <ReportDetailContent
                 audit={audit}
                 links={links}
@@ -488,61 +632,134 @@ function ExportMenu({ links }) {
 }
 
 function SummaryStrip({ audit, links, onOpenScreenshot }) {
+  const [analysisOpen, setAnalysisOpen] = React.useState(false);
+  const analysisIconRef = React.useRef(null);
   const summary = audit.summary || {};
-  const ai = audit.ai || {};
-  const fallbackSummary = buildUiFallbackSummary(audit.issues || []);
-  const aiSummary = ai.summary || {};
+  const aiSummary = audit.ai?.summary || {};
+  const taskConclusion = audit.meta?.taskConclusion;
   const riskLevel = aiSummary.riskLevel || inferRiskLevel(summary);
-  const highPriorityCount = (summary.bySeverity?.Blocker || 0) + (summary.bySeverity?.Major || 0);
-  const verdict = cleanAiVerdict(aiSummary.verdict || '') || fallbackSummary.verdict || summarySentence(summary, aiSummary);
-  const aiFindings = filterAiListItems(aiSummary.keyFindings || []);
-  const visibleFindings = (aiFindings.length ? aiFindings : fallbackSummary.keyFindings).slice(0, 2);
-  const insightLabel = ai.status === 'failed' ? '降级洞察' : ai.status === 'enabled' ? 'AI 洞察' : '规则洞察';
+  const analysis = buildAuditAnalysis(audit.issues || [], summary);
 
   return (
-    <div className="summary-strip">
-      <button className="screenshot-preview" type="button" aria-label="查看完整页面截图" onClick={() => onOpenScreenshot({ label: '完整页面截图' })}>
-        {links?.screenshot ? <img src={links.screenshot} alt="页面首屏截图" /> : <div className="screenshot-fallback">暂无截图</div>}
-        <span className="screenshot-label">页面截图</span>
-        <span className="screenshot-action">点击查看完整截图</span>
-      </button>
-      <div className="summary-brief">
-        <div className="summary-brief-top">
-          <div className="summary-total">
-            <strong>{summary.total || 0}</strong>
-            <span>个问题</span>
+    <>
+      <div className="summary-strip">
+        <button className="screenshot-preview" type="button" aria-label="查看完整页面截图" onClick={() => onOpenScreenshot({ label: '完整页面截图' })}>
+          {links?.screenshot ? <img src={links.screenshot} alt="页面首屏截图" /> : <div className="screenshot-fallback">暂无截图</div>}
+          <span>点击查看完整截图</span>
+        </button>
+        <div className="summary-brief">
+          <div className="summary-metric-row">
+            <div className="summary-total">
+              <strong>{summary.total || 0}</strong>
+              <span>个问题</span>
+            </div>
+            <Badge variant={riskBadge(riskLevel)}>{riskLabel(riskLevel)}</Badge>
           </div>
-          <Badge variant={riskBadge(riskLevel)}>{riskLabel(riskLevel)}</Badge>
-        </div>
-        <div className="summary-metrics" aria-label="问题分布">
-          <div>
-            <span>高优先级</span>
-            <strong>{highPriorityCount}</strong>
+          <div className="summary-ai-brief">
+            <div className="summary-ai-title">
+              <div>
+                <span><Sparkles className="h-4 w-4" />AI 总结</span>
+                {audit.ai?.status === 'failed' ? <Badge variant="major">降级</Badge> : null}
+              </div>
+              <Button
+                className="summary-analysis-button"
+                type="button"
+                variant="ghost"
+                onClick={() => setAnalysisOpen(true)}
+                onMouseEnter={() => analysisIconRef.current?.startAnimation()}
+                onMouseLeave={() => analysisIconRef.current?.stopAnimation()}
+              >
+                查看完整分析
+                <MoveRightIcon
+                  ref={analysisIconRef}
+                  className="summary-analysis-icon"
+                  size={15}
+                  duration={0.72}
+                  aria-hidden="true"
+                />
+              </Button>
+            </div>
+            <p>{analysis.shortSummary}</p>
           </div>
-          <div>
-            <span>阻断</span>
-            <strong>{summary.bySeverity?.Blocker || 0}</strong>
-          </div>
-          <div>
-            <span>严重</span>
-            <strong>{summary.bySeverity?.Major || 0}</strong>
-          </div>
-        </div>
-        <div className="summary-insight">
-          <div className="summary-insight-heading">
-            <span>{insightLabel}</span>
-            {ai.model ? <em>{ai.model}</em> : null}
-          </div>
-          <p>{verdict}</p>
-          {visibleFindings.length ? (
-            <ul>
-              {visibleFindings.map((item, index) => (
-                <li key={`summary-finding-${index}`}>{item}</li>
-              ))}
-            </ul>
-          ) : null}
         </div>
       </div>
+      {taskConclusion ? <TaskConclusionCard conclusion={taskConclusion} /> : null}
+      {analysisOpen ? <AuditAnalysisModal analysis={analysis} onClose={() => setAnalysisOpen(false)} /> : null}
+    </>
+  );
+}
+
+function TaskConclusionCard({ conclusion }) {
+  return (
+    <section className={cn('task-conclusion-card', `is-${conclusion.status || 'review'}`)}>
+      <div>
+        <Badge variant={conclusion.status === 'blocked' ? 'blocker' : conclusion.status === 'needs-fix' ? 'major' : 'minor'}>
+          {conclusion.label || '任务验收结论'}
+        </Badge>
+        <h3>{conclusion.task || '页面任务路径'}</h3>
+        <p>{conclusion.verdict}</p>
+      </div>
+      <div className="task-conclusion-meta">
+        <span>{stepPlanLabel({ provider: conclusion.generatedBy, confidence: conclusion.confidence, steps: conclusion.steps })}</span>
+        {conclusion.finalUrl ? <span>{shortUrl(conclusion.finalUrl)}</span> : null}
+      </div>
+    </section>
+  );
+}
+
+function AuditAnalysisModal({ analysis, onClose }) {
+  const pieStyle = { background: distributionPieGradient(analysis.distribution) };
+
+  return (
+    <div className="analysis-modal" role="dialog" aria-modal="true" aria-labelledby="analysis-title">
+      <button className="modal-backdrop" type="button" aria-label="关闭完整分析报告" onClick={onClose} />
+      <article className="analysis-modal-content">
+        <Button className="modal-close" variant="secondary" size="icon" type="button" aria-label="关闭完整分析报告" onClick={onClose}>
+          <X className="h-4 w-4" />
+        </Button>
+        <header className="analysis-report-header">
+          <p><Sparkles className="h-4 w-4" />AI 完整分析</p>
+          <h3 id="analysis-title">本次无障碍审计总结</h3>
+          <strong>{analysis.shortSummary}</strong>
+        </header>
+        <section className="analysis-section">
+          <h4>问题分布</h4>
+          <div className="analysis-distribution-chart">
+            <div className="analysis-pie" style={pieStyle} role="img" aria-label={analysis.distribution.map((item) => `${item.label} ${item.count} 个，占比 ${item.percent}`).join('，')}>
+              <span>{analysis.total}</span>
+              <small>总问题</small>
+            </div>
+            <div className="analysis-distribution-legend">
+              {analysis.distribution.map((item) => (
+                <div key={item.label}>
+                  <span className="analysis-legend-dot" style={{ background: item.color }} aria-hidden="true" />
+                  <strong>{item.label}</strong>
+                  <em>{item.count} 个</em>
+                  <b>{item.percent}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+        <section className="analysis-section">
+          <h4>核心问题（按修复优先级）</h4>
+          <ol className="analysis-core-list">
+            {analysis.coreIssues.map((item, index) => (
+              <li key={`${item.title}-${item.count}`}>
+                <span className="analysis-core-number">{index + 1}</span>
+                <div>
+                  <strong>{item.title}（{item.severityLabel}，{item.count} 处）</strong>
+                  <span>{item.description}</span>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+        <section className="analysis-section">
+          <h4>修复策略建议</h4>
+          <p>{analysis.repairSummary}</p>
+        </section>
+      </article>
     </div>
   );
 }
@@ -573,98 +790,54 @@ function SeverityPills({ audit, value, onChange }) {
   );
 }
 
-function AiPanel({ ai, issues = [] }) {
-  if (!ai) {
-    return null;
-  }
+function buildAuditAnalysis(issues = [], summary = {}) {
+  const groups = groupIssuesForInsight(issues);
+  const bySeverity = {
+    ...countIssuesBySeverity(issues),
+    ...(summary.bySeverity || {}),
+  };
+  const total = summary.total ?? issues.length;
+  const highPriority = (bySeverity.Blocker || 0) + (bySeverity.Major || 0);
+  const blockerGroup = groups.find((group) => group.severity === 'Blocker');
+  const majorGroup = groups.find((group) => group.severity === 'Major');
+  const mostFrequentGroup = [...groups].sort((left, right) => right.count - left.count || insightSeverityRank(right.severity) - insightSeverityRank(left.severity))[0];
+  const riskGroup = blockerGroup || majorGroup || groups[0];
+  const riskLevel = blockerGroup || majorGroup ? '高' : issues.length ? '中' : '低';
+  const shortSummary = issues.length
+    ? `本次共发现 ${total} 个问题，整体风险等级为${riskLevel}，其中高优先级问题 ${highPriority} 个，建议优先处理「${shortIssueTitle(riskGroup?.title)}」。`
+    : '本次未发现自动化规则问题，仍建议进行关键流程和读屏体验人工复核。';
+  const distribution = [
+    { label: '阻断', count: bySeverity.Blocker || 0, percent: formatIssuePercent(bySeverity.Blocker || 0, total), color: '#dc2626' },
+    { label: '严重', count: bySeverity.Major || 0, percent: formatIssuePercent(bySeverity.Major || 0, total), color: '#f97316' },
+    { label: '一般', count: bySeverity.Minor || 0, percent: formatIssuePercent(bySeverity.Minor || 0, total), color: '#2563eb' },
+    { label: '建议', count: bySeverity.Suggestion || 0, percent: formatIssuePercent(bySeverity.Suggestion || 0, total), color: '#7c3aed' },
+  ];
+  const coreIssues = groups.slice(0, 7).map((group) => ({
+    title: shortIssueTitle(group.title, 42),
+    severityLabel: severityLabelForInsight(group.severity),
+    count: group.count,
+    description: diagnosisForInsight(group, total),
+  }));
+  const repairSummary = mostFrequentGroup
+    ? buildRepairSummary(groups, total)
+    : '没有形成明显集中问题，建议保留人工抽样复核。';
 
-  if (ai.status === 'disabled') {
-    return (
-      <Card className="ai-card">
-        <div className="ai-card-header">
-          <h3>AI 语义复核未启用</h3>
-          <Badge>Gemini</Badge>
-        </div>
-        <p>{ai.reason || '未配置 API Key 或本次关闭。'}</p>
-      </Card>
-    );
-  }
-
-  if (ai.status === 'failed') {
-    const summary = ai.summary || {};
-    const fallbackSummary = buildUiFallbackSummary(issues);
-    const verdict = cleanAiVerdict(summary.verdict || '') || fallbackSummary.verdict;
-    const keyFindings = filterAiListItems(summary.keyFindings || []);
-    const nextSteps = filterAiListItems(summary.recommendedNextSteps || []);
-    const attemptedModels = formatAttemptedModels(ai);
-    const errorText = formatAiError(ai.error);
-
-    return (
-      <Card className="ai-card">
-        <div className="ai-card-header">
-          <div>
-            <h3>AI 复核降级为规则洞察</h3>
-            <p>{attemptedModels || ai.model || 'gemini'}</p>
-          </div>
-          <Badge variant="major">降级</Badge>
-        </div>
-        <p className="ai-verdict">{verdict || 'AI 服务暂时不可用，已使用规则检测结果生成本次报告。'}</p>
-        <AiList title="规则洞察" items={keyFindings.length ? keyFindings : fallbackSummary.keyFindings} />
-        <AiList title="修复策略" items={nextSteps.length ? nextSteps : fallbackSummary.recommendedNextSteps} />
-        {errorText ? <p className="ai-muted">失败原因：{errorText}</p> : null}
-      </Card>
-    );
-  }
-
-  const summary = ai.summary || {};
-  const fallbackSummary = buildUiFallbackSummary(issues);
-  const verdict = cleanAiVerdict(summary.verdict || '') || fallbackSummary.verdict;
-  const keyFindings = filterAiListItems(summary.keyFindings || []);
-  const nextSteps = filterAiListItems(summary.recommendedNextSteps || []);
-  const visibleKeyFindings = keyFindings.length ? keyFindings : fallbackSummary.keyFindings;
-  const visibleNextSteps = nextSteps.length ? nextSteps : fallbackSummary.recommendedNextSteps;
-
-  if (!verdict && !visibleKeyFindings.length && !visibleNextSteps.length && !meaningfulSemanticFindings(ai.semanticFindings || []).length) {
-    return null;
-  }
-
-  return (
-    <Card className="ai-card">
-      <div className="ai-card-header">
-        <div>
-          <h3>AI 审计洞察</h3>
-        </div>
-        <Badge variant={riskBadge(summary.riskLevel)}>{summary.riskLevel || 'unknown'}</Badge>
-      </div>
-      {verdict ? <p className="ai-verdict">{verdict}</p> : null}
-      <AiList title="核心洞察" items={visibleKeyFindings} />
-      <AiList title="修复策略" items={visibleNextSteps} />
-      <SemanticFindings findings={ai.semanticFindings || []} />
-    </Card>
-  );
-}
-
-function AiList({ title, items }) {
-  if (!items.length) {
-    return null;
-  }
-
-  return (
-    <div className="ai-list">
-      <strong>{title}</strong>
-      <ul>
-        {items.map((item, index) => (
-          <li key={`${title}-${index}`}>{item}</li>
-        ))}
-      </ul>
-    </div>
-  );
+  return {
+    total,
+    shortSummary,
+    distribution,
+    coreIssues,
+    repairSummary,
+  };
 }
 
 function buildUiFallbackSummary(issues = []) {
   const groups = groupIssuesForInsight(issues);
+  const bySeverity = countIssuesBySeverity(issues);
   const blockerGroup = groups.find((group) => group.severity === 'Blocker');
-  const repeatedGroup = groups.find((group) => group.count >= 3);
+  const majorGroup = groups.find((group) => group.severity === 'Major');
+  const mostFrequentGroup = [...groups].sort((left, right) => right.count - left.count || insightSeverityRank(right.severity) - insightSeverityRank(left.severity))[0];
+  const riskGroup = blockerGroup || majorGroup || groups[0];
   const topGroup = groups[0];
 
   if (!groups.length) {
@@ -675,27 +848,77 @@ function buildUiFallbackSummary(issues = []) {
     };
   }
 
-  const verdict = blockerGroup
-    ? `首要风险集中在「${blockerGroup.title}」：这类问题会直接影响读屏或键盘用户理解和完成操作，应该作为发布前阻断项处理。`
-    : repeatedGroup
-      ? `问题呈现系统性重复，「${repeatedGroup.title}」集中出现 ${repeatedGroup.count} 处，优先从${repairLayerForInsight(repeatedGroup)}统一修复。`
-      : `主要风险集中在「${topGroup.title}」，更像是组件语义、状态设计或内容命名规则缺口，而不是单个页面的偶发问题。`;
+  const verdict = [
+    `共发现 ${issues.length} 个问题，其中阻断 ${bySeverity.Blocker}、严重 ${bySeverity.Major}、一般 ${bySeverity.Minor}、建议 ${bySeverity.Suggestion}。`,
+    `首要风险是「${shortIssueTitle(riskGroup.title)}」，出现最多的是「${shortIssueTitle(mostFrequentGroup.title)}」（${mostFrequentGroup.count} 处）。`,
+  ].join('');
 
   return {
     verdict,
-    keyFindings: groups.slice(0, 4).map((group) => (
-      `${group.title}${group.count > 1 ? `集中出现 ${group.count} 处` : '出现'}：${diagnosisForInsight(group)}`
-    )),
-    recommendedNextSteps: buildInsightNextSteps(groups, blockerGroup, repeatedGroup),
+    keyFindings: [
+      `首要风险：${shortIssueTitle(riskGroup.title)}（${severityLabelForInsight(riskGroup.severity)}），${diagnosisForInsight(riskGroup)}`,
+      mostFrequentGroup && mostFrequentGroup !== riskGroup
+        ? `最高频问题：${shortIssueTitle(mostFrequentGroup.title)}出现 ${mostFrequentGroup.count} 处，建议从${repairLayerForInsight(mostFrequentGroup)}统一处理。`
+        : `最高频问题同样是首要风险，共出现 ${riskGroup.count} 处，建议从${repairLayerForInsight(riskGroup)}统一处理。`,
+    ].filter(Boolean),
+    recommendedNextSteps: buildInsightNextSteps(groups, blockerGroup, mostFrequentGroup),
   };
+}
+
+function countIssuesBySeverity(issues = []) {
+  return issues.reduce((result, issue) => {
+    const severity = issue.severity || 'Suggestion';
+    result[severity] = (result[severity] || 0) + 1;
+    return result;
+  }, { Blocker: 0, Major: 0, Minor: 0, Suggestion: 0 });
+}
+
+function shortIssueTitle(title, maxLength = 24) {
+  const value = String(title || '未命名问题').replace(/\s+/g, ' ').trim();
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+}
+
+function formatIssuePercent(count, total) {
+  if (!total) {
+    return '0%';
+  }
+  return `${((count / total) * 100).toFixed(1)}%`;
+}
+
+function distributionPieGradient(distribution = []) {
+  const total = distribution.reduce((sum, item) => sum + item.count, 0);
+  if (!total) {
+    return 'conic-gradient(rgb(226 232 240) 0deg 360deg)';
+  }
+  let cursor = 0;
+  const segments = distribution
+    .filter((item) => item.count > 0)
+    .map((item) => {
+      const start = cursor;
+      const end = cursor + (item.count / total) * 360;
+      cursor = end;
+      return `${item.color} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
+    });
+  return `conic-gradient(${segments.join(', ')})`;
+}
+
+function severityLabelForInsight(severity) {
+  return {
+    Blocker: '阻断',
+    Major: '严重',
+    Minor: '一般',
+    Suggestion: '建议',
+  }[severity] || '建议';
 }
 
 function groupIssuesForInsight(issues = []) {
   const grouped = new Map();
   for (const issue of issues) {
-    const key = [issue.title, issue.ruleSource, issue.tier].map((value) => String(value || '').trim().toLowerCase()).join('|');
+    const category = insightCategoryForIssue(issue);
+    const key = category || [issue.title, issue.ruleSource, issue.tier].map((value) => String(value || '').trim().toLowerCase()).join('|');
     const current = grouped.get(key) || {
-      title: issue.title || '未命名问题',
+      category,
+      title: insightTitleForIssue(issue, category),
       severity: issue.severity || 'Suggestion',
       ruleSource: issue.ruleSource || '',
       tier: issue.tier || '',
@@ -704,12 +927,98 @@ function groupIssuesForInsight(issues = []) {
     };
     current.count += 1;
     current.severity = higherInsightSeverity(current.severity, issue.severity);
+    if (!current.ruleSource && issue.ruleSource) {
+      current.ruleSource = issue.ruleSource;
+    }
+    if (!current.recommendation && issue.recommendation) {
+      current.recommendation = issue.recommendation;
+    }
     grouped.set(key, current);
   }
   return Array.from(grouped.values()).sort((left, right) => (
-    insightSeverityRank(right.severity) - insightSeverityRank(left.severity)
+    insightPriorityRank(left) - insightPriorityRank(right)
+    || insightSeverityRank(right.severity) - insightSeverityRank(left.severity)
     || right.count - left.count
   ));
+}
+
+function insightCategoryForIssue(issue = {}) {
+  const text = insightIssueText(issue);
+  if (/button-name|按钮缺少|按钮.*可访问名称/i.test(text)) {
+    return 'accessible-name-button';
+  }
+  if (/link-name|链接缺少|链接.*可访问名称/i.test(text)) {
+    return 'accessible-name-link';
+  }
+  if (/\blabel\b|表单.*标签|输入框.*名称|表单控件/i.test(text)) {
+    return 'accessible-name-form';
+  }
+  if (/accessible name|可访问名称|缺少可访问名称|aria-label|aria-labelledby/i.test(text)) {
+    return 'accessible-name-control';
+  }
+  if (/target-size|target size|触控|点击目标|可点击目标|尺寸小于|24px/i.test(text)) {
+    return 'target-size';
+  }
+  if (/color-contrast|contrast|对比度/i.test(text)) {
+    return 'color-contrast';
+  }
+  if (/listitem|list item|列表结构|<li>|ul>|ol>|列表项/i.test(text)) {
+    return 'list-structure';
+  }
+  if (/landmark|one-main|main-is-top-level|region|页面结构|<main>|main landmark/i.test(text)) {
+    return 'landmark';
+  }
+  if (/meta-viewport|viewport|maximum-scale|user-scalable|禁用缩放|缩放/i.test(text)) {
+    return 'viewport';
+  }
+  if (/image-alt|alt|替代文本|图片/i.test(text)) {
+    return 'image-alt';
+  }
+  return '';
+}
+
+function insightTitleForIssue(issue = {}, category = '') {
+  return {
+    'accessible-name-button': '按钮缺少可访问名称',
+    'accessible-name-link': '链接缺少可访问名称',
+    'accessible-name-form': '表单控件缺少可访问名称',
+    'accessible-name-control': '控件缺少可访问名称',
+    'target-size': '可点击目标尺寸小于 24px',
+    'color-contrast': '文字颜色对比度不足',
+    'list-structure': '列表结构错误',
+    landmark: '页面结构 / landmark 问题',
+    viewport: '移动端禁用缩放',
+    'image-alt': '图片替代文本需人工复核',
+  }[category] || issue.title || '未命名问题';
+}
+
+function insightIssueText(issue = {}) {
+  return [
+    issue.title,
+    issue.id,
+    issue.ruleSource,
+    issue.ruleUrl,
+    issue.recommendation,
+    issue.evidence?.failureSummary,
+  ].filter(Boolean).join(' ');
+}
+
+function insightPriorityRank(group) {
+  if (String(group.category || '').startsWith('accessible-name')) {
+    return 1;
+  }
+  const categoryOrder = {
+    'target-size': 2,
+    'color-contrast': 3,
+    'list-structure': 4,
+    landmark: 5,
+    viewport: 6,
+    'image-alt': 7,
+  };
+  if (categoryOrder[group.category]) {
+    return categoryOrder[group.category];
+  }
+  return 20 - insightSeverityRank(group.severity);
 }
 
 function buildInsightNextSteps(groups, blockerGroup, repeatedGroup) {
@@ -732,8 +1041,33 @@ function buildInsightNextSteps(groups, blockerGroup, repeatedGroup) {
   return steps;
 }
 
-function diagnosisForInsight(group) {
+function diagnosisForInsight(group, total = 0) {
   const text = insightGroupText(group);
+  const percent = formatIssuePercent(group.count, total);
+  if (String(group.category || '').startsWith('accessible-name')) {
+    const prefix = group.severity === 'Blocker' && group.count === 1
+      ? '这是唯一的阻断级问题，也是首要风险。'
+      : '这是会直接影响读屏和键盘用户完成任务的高优先级问题。';
+    return `${prefix}图标按钮、组合框触发器或无文本控件视觉上能看懂，但没有同步提供 aria-label、aria-labelledby 或可见文本；依赖辅助技术的用户可能无法理解控件用途，应最先修复。`;
+  }
+  if (group.category === 'target-size') {
+    return `这是数量最多的体验类问题之一，占全部问题 ${percent}。大量头像链接、图标按钮或紧凑数字按钮未达到 WCAG 2.2 的 24×24px 最小触控目标；如果它们来自同一套卡片或列表组件，建议在组件层统一扩大热区或调整相邻间距，一次性批量解决。`;
+  }
+  if (group.category === 'color-contrast') {
+    return `文本与背景色对比度低于 WCAG 4.5:1 要求，常集中在弱化文字、侧边栏导航、计数数字或禁用态上。它通常不是单点文案问题，而是颜色 token、组件默认态或状态色没有统一校准。`;
+  }
+  if (group.category === 'list-structure') {
+    return '大量 <li> 缺少 <ul>/<ol> 父元素，读屏器无法正确识别列表层级和列表项数量。应修正 DOM 结构或组件模板，而不是只依赖视觉排版模拟列表。';
+  }
+  if (group.category === 'landmark') {
+    return '这类问题通常来自页面模板或布局容器重复输出 landmark，例如嵌套 <main>、重复 main landmark 或 landmark 缺少唯一标识。根因在页面结构层，修一次模板往往可以同时消除多个相关告警。';
+  }
+  if (group.category === 'viewport') {
+    return 'viewport 配置限制缩放会让低视力用户无法放大页面查看内容。重点检查 maximum-scale、user-scalable 等属性，移除禁止缩放的配置即可。';
+  }
+  if (group.category === 'image-alt') {
+    return '图片替代文本需要结合语义人工复核：承载信息的图片应说明内容和用途，装饰性背景图或无意义头像应使用空 alt，避免读屏器读出噪音。';
+  }
   if (/contrast|对比度/i.test(text)) {
     return '更可能是颜色 token、组件默认态或禁用态没有按 WCAG 对比度门槛校准。';
   }
@@ -750,6 +1084,20 @@ function diagnosisForInsight(group) {
     return '点击热区不足会放大移动端、低视力和运动障碍场景下的误触与无法命中。';
   }
   return '需要结合规则证据判断它属于组件层缺陷、页面结构缺陷还是内容规范缺口。';
+}
+
+function buildRepairSummary(groups = [], total = 0) {
+  const blockerGroup = groups.find((group) => group.severity === 'Blocker');
+  const reusableGroups = groups.filter((group) => ['target-size', 'color-contrast', 'list-structure'].includes(group.category));
+  const reusableTotal = reusableGroups.reduce((sum, group) => sum + group.count, 0);
+  const lead = blockerGroup
+    ? `${blockerGroup.count} 个阻断项需要单独优先修复`
+    : '当前没有阻断项，但仍应先处理高优先级问题';
+  const reusableText = reusableGroups.length
+    ? `${reusableGroups.map((group) => `${shortIssueTitle(group.title)}（${group.count}）`).join('、')} 合计占 ${formatIssuePercent(reusableTotal, total)}，多半可以在组件、设计 token 或 DOM 模板层统一改动`
+    : `${groups.slice(0, 3).map((group) => `${shortIssueTitle(group.title)}（${group.count}）`).join('、')} 是本次主要问题来源`;
+
+  return `问题虽多，但集中在少数可复用源头上：${lead}；${reusableText}，实际改动点通常少于问题实例数。建议按“阻断项 -> 组件级批量项 -> 页面结构项 -> alt 与内容人工复核”的顺序推进。`;
 }
 
 function nextStepForInsight(group) {
@@ -804,21 +1152,6 @@ function insightSeverityRank(severity) {
     Major: 3,
     Blocker: 4,
   }[severity] || 0;
-}
-
-function formatAttemptedModels(ai = {}) {
-  const models = Array.isArray(ai.attemptedModels) && ai.attemptedModels.length
-    ? ai.attemptedModels
-    : [ai.model].filter(Boolean);
-  return models.length ? `已尝试：${models.join(' -> ')}` : '';
-}
-
-function formatAiError(error) {
-  const text = String(error || '').replace(/\s+/g, ' ').trim();
-  if (!text) {
-    return '';
-  }
-  return text.length > 220 ? `${text.slice(0, 219)}...` : text;
 }
 
 function SemanticFindings({ findings }) {
@@ -1465,20 +1798,94 @@ function updateStep(steps, setSteps, index, patch) {
   setSteps(steps.map((step, stepIndex) => (stepIndex === index ? { ...step, ...patch } : step)));
 }
 
-function normalizeStepPayload(step) {
+function stepInputValue(step) {
+  if (step.action === 'press') {
+    return step.key || step.value || '';
+  }
   if (step.action === 'wait') {
-    return { action: step.action, ms: Number(step.value || 1000) };
+    return step.ms || step.value || '';
+  }
+  return step.value || '';
+}
+
+function stepValuePlaceholder(action) {
+  if (action === 'press') {
+    return '按键';
+  }
+  if (action === 'wait') {
+    return '毫秒';
+  }
+  if (action === 'fill') {
+    return '输入值';
+  }
+  return '值';
+}
+
+function valuePatchForStep(action, value) {
+  if (action === 'press') {
+    return { key: value, value: '' };
+  }
+  if (action === 'wait') {
+    return { ms: value, value: '' };
+  }
+  return { value };
+}
+
+function normalizeStepPayload(step) {
+  const base = {
+    action: step.action,
+    description: step.description || undefined,
+    selectors: step.selectors?.length ? step.selectors : undefined,
+    role: step.role || undefined,
+    name: step.name || undefined,
+    label: step.label || undefined,
+    text: step.text || undefined,
+    timeout: step.timeout ? Number(step.timeout) : undefined,
+  };
+  if (step.action === 'wait') {
+    return { ...base, ms: Number(step.ms || step.value || 1000) };
   }
   if (step.action === 'press') {
-    return { action: step.action, key: step.value || 'Enter' };
+    return { ...base, key: step.key || step.value || 'Enter' };
   }
   if (step.action === 'fill') {
-    return { action: step.action, selector: step.selector || undefined, value: step.value || '' };
+    return { ...base, selector: step.selector || undefined, value: step.value || '' };
   }
   return {
-    action: step.action,
+    ...base,
     selector: step.selector || undefined,
   };
+}
+
+function stepPlanLabel(plan) {
+  const source = {
+    gemini: 'AI 生成',
+    'local-rules': '本地规则生成',
+    'local-fallback': '本地兜底生成',
+    manual: '手动步骤',
+  }[plan.provider] || plan.provider || '已生成';
+  return `${source} · ${plan.steps?.length || 0} 步 · ${confidenceLabel(plan.confidence)}`;
+}
+
+function confidenceLabel(confidence) {
+  return {
+    high: '高置信',
+    medium: '中等置信',
+    low: '低置信',
+    'needs-review': '需复核',
+  }[confidence] || '需复核';
+}
+
+function shortUrl(value = '') {
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'file:') {
+      return '本地文件';
+    }
+    return `${url.hostname}${url.pathname === '/' ? '' : url.pathname}`;
+  } catch {
+    return value;
+  }
 }
 
 function riskBadge(riskLevel) {
@@ -1545,16 +1952,6 @@ function cleanAiVerdict(text = '') {
     .replace(/^本次审计发现\s*\d+\s*个问题。?\s*/u, '')
     .trim();
   return isLowValueAiSummaryItem(cleaned) ? '' : cleaned;
-}
-
-function filterAiListItems(items) {
-  return items.filter((item) => {
-    const text = String(item || '').trim();
-    if (!text) {
-      return false;
-    }
-    return !isLowValueAiSummaryItem(text);
-  });
 }
 
 function isLowValueAiSummaryItem(text = '') {

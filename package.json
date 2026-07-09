@@ -27,6 +27,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.23.0",
+    "motion": "^12.42.2",
     "playwright": "^1.55.1",
     "postcss": "^8.5.16",
     "react": "^19.2.7",

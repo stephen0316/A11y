@@ -19,6 +19,13 @@ export function renderMarkdownReport(audit) {
   lines.push(`- Accessibility Tree: ${meta.artifacts.accessibilityTree}`);
   lines.push('');
 
+  if (meta.taskConclusion) {
+    lines.push('## 任务级验收结论');
+    lines.push('');
+    lines.push(...renderTaskConclusion(meta.taskConclusion));
+    lines.push('');
+  }
+
   lines.push('## 页面级总览');
   lines.push('');
   lines.push(`- 问题总数: ${summary.total}`);
@@ -104,6 +111,39 @@ export function renderMarkdownReport(audit) {
   lines.push('');
 
   return `${lines.join('\n')}\n`;
+}
+
+function renderTaskConclusion(conclusion) {
+  const lines = [
+    `- 任务: ${conclusion.task || '未填写'}`,
+    `- 结论: ${conclusion.label}`,
+    `- 判断: ${conclusion.verdict}`,
+    `- 步骤来源: ${conclusion.generatedBy || 'manual'}`,
+    `- 置信度: ${conclusion.confidence || 'medium'}`,
+  ];
+
+  if (conclusion.assumptions?.length) {
+    lines.push('- 解析假设:');
+    for (const item of conclusion.assumptions) {
+      lines.push(`  - ${item}`);
+    }
+  }
+
+  if (conclusion.warnings?.length) {
+    lines.push('- 注意事项:');
+    for (const item of conclusion.warnings) {
+      lines.push(`  - ${item}`);
+    }
+  }
+
+  if (conclusion.steps?.length) {
+    lines.push('- 已执行步骤:');
+    for (const step of conclusion.steps) {
+      lines.push(`  - ${step.description || step.action}${step.selector ? ` (${step.selector})` : ''}`);
+    }
+  }
+
+  return lines;
 }
 
 function renderAiSummary(ai) {

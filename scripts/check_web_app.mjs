@@ -18,7 +18,15 @@ try {
 
   await page.getByLabel('URL').fill(`file://${path.resolve('examples/sample-target.html')}`);
   await page.getByLabel('页面名称').fill('示例缺陷页');
+  await page.getByLabel('启用 AI 语义复核').uncheck();
+  assert.equal(await page.getByLabel('任务路径').count(), 0, 'Natural language task field should be hidden by default');
+  await page.getByLabel('启用自然语言任务').check();
+  await page.getByLabel('任务路径').fill('邮箱: qa@example.com，密码: test123，然后等待 toast');
+  await page.getByRole('button', { name: '生成步骤' }).click();
+  await assertVisibleText(page, '本地规则生成');
+  await assertVisibleText(page, '填写邮箱');
   await page.getByRole('button', { name: '开始审计' }).click();
+  await assertVisibleText(page, '已自动执行 3 个任务步骤并在最终状态完成审计');
   await assertVisibleText(page, '文字颜色对比度不足');
   await assertVisibleText(page, '图片缺少替代文本');
   await page.getByLabel('查看完整页面截图').waitFor({ timeout: 8000 });
