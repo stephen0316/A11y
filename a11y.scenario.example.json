@@ -1,0 +1,30 @@
+{
+  "targets": [
+    {
+      "name": "登录页",
+      "url": "https://example.com/login",
+      "notes": "测试环境；如需账号，写在这里或使用预置测试账号。",
+      "steps": [
+        {
+          "action": "wait",
+          "ms": 1000
+        }
+      ]
+    },
+    {
+      "name": "弹窗流程",
+      "url": "https://example.com/products",
+      "notes": "示例：打开新增弹窗后审计最终状态。",
+      "steps": [
+        {
+          "action": "click",
+          "selector": "[data-testid='create-button']"
+        },
+        {
+          "action": "waitForSelector",
+          "selector": "[role='dialog']"
+        }
+      ]
+    }
+  ]
+}

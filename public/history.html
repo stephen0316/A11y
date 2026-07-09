@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>历史报告 - 无障碍验收台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <main class="workspace history-workspace">
+        <section class="page-hero history-hero" aria-labelledby="history-title">
+          <div>
+            <p class="brand-kicker">Historical Evidence</p>
+            <h1 id="history-title">历史报告</h1>
+          </div>
+          <div class="history-actions">
+            <button class="secondary-action" data-refresh-reports type="button">刷新</button>
+            <a class="secondary-action" href="/">返回审计台</a>
+          </div>
+        </section>
+
+        <p class="hero-copy">每次审计都会生成一组报告文件；这里按生成时间展示所有已保存记录。</p>
+
+        <div class="report-list" data-report-list></div>
+      </main>
+    </div>
+
+    <script src="/history.js" type="module"></script>
+  </body>
+</html>

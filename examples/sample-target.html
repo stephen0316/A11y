@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>A11y MVP Sample</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 32px;
+      }
+
+      button:focus,
+      a:focus,
+      input:focus {
+        outline: none;
+      }
+
+      .low-contrast {
+        color: #aaa;
+        background: #fff;
+      }
+
+      .tiny {
+        width: 18px;
+        height: 18px;
+      }
+
+      .toast {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        background: #222;
+        color: #fff;
+        padding: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>登录</h1>
+    <h3>账号信息</h3>
+    <p class="low-contrast">这段文字对比度不足。</p>
+    <form>
+      <input id="email" placeholder="邮箱" />
+      <input id="password" type="password" placeholder="密码" />
+      <button type="submit">登录</button>
+    </form>
+    <img src="missing.png" />
+    <a href="/help">更多</a>
+    <button class="tiny" aria-label="关闭">x</button>
+    <div class="toast">保存成功</div>
+  </body>
+</html>
