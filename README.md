@@ -1,6 +1,6 @@
 # 无障碍 AI 体验评测工具 MVP
 
-这是一个面向 UED + QA 验收的无障碍审计 MVP。它以可访问 URL 为输入，使用 Playwright 打开真实页面，结合 axe-core、DOM 信号、键盘行为、组件规则和 Gemini AI 生成可复核、可分派、可修复的问题报告。
+易达是一个面向 UED + QA 的无障碍走查 MVP。它以可访问 URL 为输入，使用 Playwright 打开真实页面，结合 axe-core、DOM 信号、键盘行为、组件规则和 Gemini AI 生成可复核、可分派、可修复的问题报告。
 
 ## 能力边界
 
@@ -45,12 +45,11 @@ export GEMINI_FALLBACK_MODELS="gemini-2.5-flash,gemini-2.5-flash-lite"
 export GEMINI_TIMEOUT_MS="90000"
 export GEMINI_MAX_ATTEMPTS="2"
 export GEMINI_RETRY_DELAY_MS="800"
-export GEMINI_THINKING_LEVEL="low"
 ```
 
-Web App：如果设置了 `GEMINI_API_KEY`，页面里的“启用 AI 语义复核”默认会运行 Gemini；没有 Key 或调用失败时，会自动降级为原有规则报告。
+Web App：页面走查会默认尝试运行 AI 语义复核；如果未设置 `GEMINI_API_KEY` 或调用失败，报告会明确展示未运行/降级状态，并继续输出自动规则结果。
 
-CLI：默认不启用 AI，避免批量审计产生意外 API 成本。需要 AI 时显式加 `--ai`。
+CLI：默认不启用 AI，避免批量走查产生意外 API 成本。需要 AI 时显式加 `--ai`。
 
 ## 使用
 
@@ -72,25 +71,25 @@ http://127.0.0.1:3000
 - `键盘遍历次数`：工具连续按 Tab 的次数，用来检查焦点顺序、焦点可见性和疑似键盘陷阱。
 - `自然语言任务`：用一句话描述要验收的业务路径，工具会生成并执行点击、填写、等待等动作，进入弹窗、表单提交后 toast、错误态等需要验收的状态。
 
-审计单个页面：
+走查单个页面：
 
 ```bash
 npm run audit -- --url https://example.com --name "示例页面"
 ```
 
-审计单个页面并启用 Gemini AI：
+走查单个页面并启用 Gemini AI：
 
 ```bash
 npm run audit -- --url https://example.com --name "示例页面" --ai
 ```
 
-审计带操作步骤的场景：
+走查带操作步骤的场景：
 
 ```bash
 npm run audit -- --scenario ./a11y.scenario.example.json
 ```
 
-Web 审计台支持自然语言生成步骤：填写 `任务路径` 后点击 `生成步骤` 可预览和微调；也可以直接点击 `开始审计`，后端会自动解析并执行。没有配置 Gemini 时会使用本地规则解析常见登录、表单、弹窗、toast、按键和等待路径；配置 Gemini 后会优先用 AI 生成候选步骤，并保留本地规则兜底。
+易达支持自然语言生成步骤：填写 `任务路径` 后点击 `生成步骤` 可预览和微调；也可以直接点击 `开始走查`，后端会自动解析并执行。没有配置 Gemini 时会使用本地规则解析常见登录、表单、弹窗、toast、按键和等待路径；配置 Gemini 后会优先用 AI 生成候选步骤，并保留本地规则兜底。
 
 自然语言生成步骤接口：
 
@@ -110,13 +109,13 @@ npm run audit -- --url "file:///Volumes/vibecoding/A11y/examples/sample-target.h
 
 每次运行会在 `reports/<页面名>-<时间戳>/` 下生成：
 
-- `report.md`：给 UED、QA、研发阅读的验收报告。
+- `report.md`：给 UED、QA、研发阅读的走查报告。
 - `audit.json`：完整机器可读结果。
 - `screenshot.png`：全页截图证据。
-- `dom-snapshot.html`：审计时的 DOM 快照。
+- `dom-snapshot.html`：走查时的 DOM 快照。
 - `accessibility-tree.json`：浏览器可访问性树。
 
-每个问题都包含规则来源、影响用户、复现步骤、证据、严重级别、修复建议和责任角色。启用 Gemini 后，`audit.json` 会额外包含 `ai` 字段，报告中会出现 AI 审计摘要、AI 语义复核项和 AI 增强修复建议。
+每个问题都包含规则来源、影响用户、复现步骤、证据、严重级别、修复建议和责任角色。启用 Gemini 后，`audit.json` 会额外包含 `ai` 字段，报告中会出现 AI 走查摘要、AI 语义复核项和 AI 增强修复建议。
 
 ## 场景文件格式
 

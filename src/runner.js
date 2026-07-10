@@ -240,8 +240,8 @@ function buildTaskConclusion({ target, issues, scenarioExecution, finalUrl }) {
 
 function buildTaskVerdict({ blockerCount, majorCount, stepCount }) {
   const prefix = stepCount
-    ? `已自动执行 ${stepCount} 个任务步骤并在最终状态完成审计。`
-    : '未执行前置任务步骤，已直接审计目标页面。';
+    ? `已自动执行 ${stepCount} 个任务步骤并在最终状态完成走查。`
+    : '未执行前置任务步骤，已直接走查目标页面。';
 
   if (blockerCount) {
     return `${prefix} 当前存在 ${blockerCount} 个阻断级问题，不建议验收通过。`;

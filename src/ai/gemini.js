@@ -13,7 +13,7 @@ export const EMPTY_AI_RESULT = {
 };
 
 const SYSTEM_INSTRUCTION = `
-你是一个资深 Web 无障碍审计员，面向 UED、QA 和研发输出结果。
+你是一个资深 Web 无障碍走查专家，面向 UED、QA 和研发输出结果。
 你必须基于提供的页面证据、WCAG/ARIA 规则、DOM、Accessibility Tree 和键盘路径判断。
 不要声称已经做了真实读屏器人工测试；如果证据不足，请标为 needs-review。
 不要覆盖 axe-core 的确定性结论，只补充语义判断、真实用户影响、根因和修复建议。
@@ -257,7 +257,7 @@ export function normalizeAiResponse(value, issues = []) {
 
 function buildPrompt(evidencePack) {
   return [
-    '请基于以下无障碍审计证据输出结构化 JSON。',
+    '请基于以下无障碍走查证据输出结构化 JSON。',
     '重点完成三件事：',
     '1. summary：输出产品级 AI 总结。verdict 用 1-2 句话概括：共发现多少问题、阻断/严重/一般/建议各多少、首要风险是什么、最高频问题是什么；keyFindings 只写 2 条判断，每条最多 60 个中文字符；recommendedNextSteps 写 2 条短建议即可。',
     '2. V1 语义复核：alt、链接文案、错误提示、图表说明、焦点顺序、状态反馈。',
@@ -735,11 +735,22 @@ function isRetryableGeminiError(error) {
 
 function buildGenerationConfig() {
   const config = { temperature: 0.2 };
-  const thinkingLevel = process.env.GEMINI_THINKING_LEVEL || 'low';
+  const thinkingLevel = resolveThinkingLevel();
   if (thinkingLevel) {
     config.thinking_level = thinkingLevel;
   }
   return config;
+}
+
+function resolveThinkingLevel() {
+  const configuredLevel = String(process.env.GEMINI_THINKING_LEVEL || '').toLowerCase();
+  if (['none', 'off', 'disabled', 'false', '0'].includes(configuredLevel)) {
+    return '';
+  }
+  if (configuredLevel === 'high') {
+    return 'high';
+  }
+  return '';
 }
 
 function retryDelayForAttempt(attempt, baseDelayMs) {

@@ -3,7 +3,7 @@ import { DEFAULT_GEMINI_MODEL, FALLBACK_GEMINI_MODELS } from './gemini.js';
 const DEFAULT_STEP_TIMEOUT_MS = 45000;
 
 const STEP_SYSTEM_INSTRUCTION = `
-你是 Web QA 自动化步骤生成器。你只把自然语言任务转换成 Playwright 可执行步骤，不做无障碍审计结论。
+你是 Web QA 自动化步骤生成器。你只把自然语言任务转换成 Playwright 可执行步骤，不做无障碍走查结论。
 输出必须是 JSON，不要输出 Markdown。
 步骤只能使用 action: fill, click, press, waitForSelector, wait。
 尽量为 click/fill/waitForSelector 提供 selectors 候选数组，并补充 label、role、name 或 text 作为回退。
@@ -115,7 +115,7 @@ export function buildLocalStepPlan(instruction) {
 
   return {
     ...normalized,
-    warnings: normalized.steps.length ? [] : ['没有从任务描述中识别到可执行操作；审计会直接检测目标页面。'],
+    warnings: normalized.steps.length ? [] : ['没有从任务描述中识别到可执行操作；走查会直接检测目标页面。'],
   };
 }
 

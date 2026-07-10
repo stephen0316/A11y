@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   ArrowUp,
@@ -50,12 +51,10 @@ const AUDIT_DRAFT_KEY = 'a11y:auditDraft';
 const DEFAULT_AUDIT_FORM = {
   url: '',
   name: '',
-  notes: '',
   advancedTaskEnabled: false,
   task: '',
   viewport: '1440x1000',
   maxTabs: '30',
-  aiEnabled: true,
 };
 
 const viewportOptions = [
@@ -162,11 +161,12 @@ function readAuditDraft() {
       return fallback;
     }
     const draft = JSON.parse(saved);
+    const savedForm = draft?.form && typeof draft.form === 'object' ? draft.form : {};
+    const { aiEnabled: _legacyAiEnabled, ...formDraft } = savedForm;
     return {
       form: {
         ...DEFAULT_AUDIT_FORM,
-        ...(draft?.form && typeof draft.form === 'object' ? draft.form : {}),
-        aiEnabled: draft?.form?.aiEnabled === undefined ? DEFAULT_AUDIT_FORM.aiEnabled : Boolean(draft.form.aiEnabled),
+        ...formDraft,
         advancedTaskEnabled: Boolean(draft?.form?.advancedTaskEnabled),
       },
       steps: Array.isArray(draft?.steps) ? draft.steps.map(normalizeDraftStep).filter(Boolean) : [],
@@ -245,9 +245,11 @@ function AuditPage() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          ...form,
+          url: form.url,
+          name: form.name,
+          viewport: form.viewport,
           maxTabs: Number(form.maxTabs || 30),
-          ai: { enabled: Boolean(form.aiEnabled) },
+          ai: { enabled: true },
           task: form.advancedTaskEnabled ? form.task : '',
           steps: form.advancedTaskEnabled
             ? steps
@@ -258,14 +260,14 @@ function AuditPage() {
       });
       const data = await readJsonResponse(response);
       if (!response.ok || !data.ok) {
-        throw new Error(data.error || '审计失败');
+        throw new Error(data.error || '走查失败');
       }
       setAudit(data.report.audit);
       setLinks(data.report.links);
       setStepPlan(data.report.audit?.meta?.target?.stepPlan || null);
       localStorage.setItem(LAST_AUDIT_KEY, JSON.stringify(data.report));
     } catch (runError) {
-      setError(runError.message || '审计失败');
+      setError(runError.message || '走查失败');
     } finally {
       setLoading(false);
     }
@@ -294,9 +296,8 @@ function AuditPage() {
         body: JSON.stringify({
           url: form.url,
           name: form.name,
-          notes: form.notes,
           task: form.task,
-          ai: { enabled: Boolean(form.aiEnabled) },
+          ai: { enabled: true },
         }),
       });
       const data = await readJsonResponse(response);
@@ -319,16 +320,16 @@ function AuditPage() {
   }, [audit, severityFilter]);
 
   return (
-    <main className="workspace">
+    <main className="workspace home-workspace">
       <section className="page-hero">
         <div>
-          <h1>无障碍验收台</h1>
-          <p>基于 WCAG 标准、页面证据链和多模态 AI 推理的无障碍体验审计助手</p>
+          <h1>易达</h1>
+          <p>基于 WCAG 标准、页面证据链和多模态 AI 推理的无障碍体验走查助手</p>
         </div>
         <div className="hero-actions">
           <Button type="button" variant="secondary" onClick={startNewAudit}>
             <NewAuditIcon className="h-4 w-4" />
-            新建审计
+            新建走查
           </Button>
           <Button asChild variant="secondary">
             <a href="/history.html">
@@ -341,7 +342,7 @@ function AuditPage() {
 
       <div className="audit-layout">
         <form className="setup-panel" onSubmit={runAudit}>
-          <PanelHeader title="审计输入" />
+          <PanelHeader title="输入" />
           <div className="panel-body">
             <fieldset>
               <legend>目标页面</legend>
@@ -363,15 +364,6 @@ function AuditPage() {
                   placeholder="例如：系统登录页"
                   value={form.name}
                   onChange={(event) => setForm({ ...form, name: event.target.value })}
-                />
-              </Field>
-              <Field label="环境 / 账号说明" htmlFor="target-notes">
-                <Textarea
-                  id="target-notes"
-                  name="notes"
-                  placeholder="测试环境、账号、权限或入口说明"
-                  value={form.notes}
-                  onChange={(event) => setForm({ ...form, notes: event.target.value })}
                 />
               </Field>
             </fieldset>
@@ -412,114 +404,124 @@ function AuditPage() {
                     onChange={(event) => setForm({ ...form, maxTabs: event.target.value })}
                   />
                 </Field>
-                <label className="ai-toggle">
-                  <input
-                    type="checkbox"
-                    checked={form.aiEnabled}
-                    onChange={(event) => setForm({ ...form, aiEnabled: event.target.checked })}
-                  />
-                  <span>启用 AI 语义复核</span>
-                </label>
               </div>
             </fieldset>
 
             <fieldset>
-              <legend>自然语言任务</legend>
-              <p className="field-hint">描述要验收的业务路径，例如“输入邮箱 qa@example.com 和密码 test123，点击登录”。系统会自动解析成具体步骤。</p>
-              <Field label="任务路径" htmlFor="target-task">
-                <Textarea
-                  id="target-task"
-                  name="task"
-                  placeholder="例如：打开新增弹窗，填写名称为测试项目，提交表单，等待成功 toast"
-                  value={form.task}
-                  onChange={(event) => setForm({ ...form, task: event.target.value })}
+              <legend>高级设置</legend>
+              <label className="advanced-toggle">
+                <input
+                  type="checkbox"
+                  checked={form.advancedTaskEnabled}
+                  onChange={(event) => setForm({ ...form, advancedTaskEnabled: event.target.checked })}
                 />
-              </Field>
-              <div className="task-actions">
-                <Button type="button" variant="secondary" onClick={generateSteps} disabled={generatingSteps || !form.task.trim()}>
-                  {generatingSteps ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  {generatingSteps ? '生成中' : '生成步骤'}
-                </Button>
-                <span>{stepPlan ? stepPlanLabel(stepPlan) : '可先生成预览，也可以直接开始审计。'}</span>
-              </div>
-              {stepPlan?.assumptions?.length || stepPlan?.warnings?.length ? (
-                <div className="step-plan-note">
-                  {[...(stepPlan.assumptions || []), ...(stepPlan.warnings || [])].slice(0, 3).map((item) => (
-                    <p key={item}>{item}</p>
-                  ))}
-                </div>
-              ) : null}
+                <span>
+                  <strong>启用自然语言任务</strong>
+                  <em>需要先跑登录、表单提交、弹窗或 toast 等业务路径时再开启。</em>
+                </span>
+              </label>
             </fieldset>
 
-            <fieldset>
-              <legend>生成步骤预览</legend>
-              <p className="field-hint">展示 AI 或本地规则生成的可执行步骤。需要时可以微调选择器和值，非必填。</p>
-              <div className="step-list">
-                {steps.map((step, index) => (
-                  <div className="step-row" key={step.id}>
-                    <Select
-                      value={step.action}
-                      onValueChange={(action) => updateStep(steps, setSteps, index, { action })}
-                    >
-                      <SelectTrigger aria-label={`第 ${index + 1} 步动作`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {actionOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      aria-label={`第 ${index + 1} 步选择器`}
-                      placeholder="选择器"
-                      value={step.selector}
-                      onChange={(event) => updateStep(steps, setSteps, index, { selector: event.target.value })}
-                    />
-                    <Input
-                      aria-label={`第 ${index + 1} 步值`}
-                      placeholder={stepValuePlaceholder(step.action)}
-                      value={stepInputValue(step)}
-                      onChange={(event) => updateStep(steps, setSteps, index, valuePatchForStep(step.action, event.target.value))}
-                    />
-                    <Button type="button" variant="ghost" size="icon" aria-label={`删除第 ${index + 1} 步`} onClick={() => setSteps(steps.filter((_, stepIndex) => stepIndex !== index))}>
-                      <X className="h-4 w-4" />
+            {form.advancedTaskEnabled ? (
+              <>
+                <fieldset>
+                  <legend>自然语言任务</legend>
+                  <p className="field-hint">描述要验收的业务路径，系统会自动解析成具体步骤</p>
+                  <Textarea
+                    id="target-task"
+                    name="task"
+                    aria-label="任务路径"
+                    placeholder="例如：打开新增弹窗，填写名称为测试项目，提交表单，等待成功 toast"
+                    value={form.task}
+                    onChange={(event) => setForm({ ...form, task: event.target.value })}
+                  />
+                  <div className="task-actions">
+                    <Button type="button" variant="secondary" onClick={generateSteps} disabled={generatingSteps || !form.task.trim()}>
+                      {generatingSteps ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                      {generatingSteps ? '生成中' : '生成步骤'}
                     </Button>
-                    {step.description ? <p className="step-description">{step.description}</p> : null}
+                    <span>{stepPlan ? stepPlanLabel(stepPlan) : '可先生成预览，也可以直接开始走查。'}</span>
                   </div>
-                ))}
-              </div>
-              <div className="step-actions">
-                <Button type="button" variant="secondary" onClick={() => setSteps([...steps, { id: crypto.randomUUID(), action: 'click', selector: '', value: '' }])}>
-                  <Plus className="h-4 w-4" />
-                  添加步骤
-                </Button>
-                <Button type="button" variant="secondary" onClick={() => setSteps([])}>
-                  清空
-                </Button>
-              </div>
-            </fieldset>
+                  {stepPlan?.assumptions?.length || stepPlan?.warnings?.length ? (
+                    <div className="step-plan-note">
+                      {[...(stepPlan.assumptions || []), ...(stepPlan.warnings || [])].slice(0, 3).map((item) => (
+                        <p key={item}>{item}</p>
+                      ))}
+                    </div>
+                  ) : null}
+                </fieldset>
+
+                <fieldset>
+                  <legend>生成步骤预览</legend>
+                  <p className="field-hint">展示 AI 或本地规则生成的可执行步骤。需要时可以微调选择器和值，非必填。</p>
+                  <div className="step-list">
+                    {steps.map((step, index) => (
+                      <div className="step-row" key={step.id}>
+                        <Select
+                          value={step.action}
+                          onValueChange={(action) => updateStep(steps, setSteps, index, { action })}
+                        >
+                          <SelectTrigger aria-label={`第 ${index + 1} 步动作`}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {actionOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          aria-label={`第 ${index + 1} 步选择器`}
+                          placeholder="选择器"
+                          value={step.selector}
+                          onChange={(event) => updateStep(steps, setSteps, index, { selector: event.target.value })}
+                        />
+                        <Input
+                          aria-label={`第 ${index + 1} 步值`}
+                          placeholder={stepValuePlaceholder(step.action)}
+                          value={stepInputValue(step)}
+                          onChange={(event) => updateStep(steps, setSteps, index, valuePatchForStep(step.action, event.target.value))}
+                        />
+                        <Button type="button" variant="ghost" size="icon" aria-label={`删除第 ${index + 1} 步`} onClick={() => setSteps(steps.filter((_, stepIndex) => stepIndex !== index))}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                        {step.description ? <p className="step-description">{step.description}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="step-actions">
+                    <Button type="button" variant="secondary" onClick={() => setSteps([...steps, { id: crypto.randomUUID(), action: 'click', selector: '', value: '' }])}>
+                      <Plus className="h-4 w-4" />
+                      添加步骤
+                    </Button>
+                    <Button type="button" variant="secondary" onClick={() => setSteps([])}>
+                      清空
+                    </Button>
+                  </div>
+                </fieldset>
+              </>
+            ) : null}
 
             {error ? <p className="error-message">{error}</p> : null}
 
             <Button className="run-button" size="lg" disabled={loading}>
               {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Play className="h-5 w-5 fill-current" />}
-              {loading ? '审计中' : '开始审计'}
+              {loading ? '走查中' : '开始走查'}
             </Button>
           </div>
         </form>
 
         <section className="result-panel">
           <PanelHeader
-            title="本次审计结果"
+            title="本次走查结果"
             action={!loading && audit && links ? <ExportMenu links={links} /> : null}
           />
           <div className="result-content">
             {loading ? (
               <EmptyState
-                title="正在生成审计报告"
+                title="正在生成走查报告"
                 description="稍等片刻，正在检测目标页面"
                 loading
               />
@@ -533,7 +535,7 @@ function AuditPage() {
                 onOpenScreenshot={(target) => setScreenshotTarget(target || { label: '完整页面截图' })}
               />
             ) : (
-              <EmptyState title="等待审计结果" description="点击输入面板中的按钮运行后，结果会显示在这里。" />
+              <EmptyState title="等待走查结果" description="点击输入面板中的按钮运行后，结果会显示在这里。" />
             )}
           </div>
         </section>
@@ -658,7 +660,7 @@ function SummaryStrip({ audit, links, onOpenScreenshot }) {
           <div className="summary-ai-brief">
             <div className="summary-ai-title">
               <div>
-                <span><Sparkles className="h-4 w-4" />AI 总结</span>
+                <span><Sparkles className="h-4 w-4" />走查分析</span>
                 {audit.ai?.status === 'failed' ? <Badge variant="major">降级</Badge> : null}
               </div>
               <Button
@@ -684,7 +686,7 @@ function SummaryStrip({ audit, links, onOpenScreenshot }) {
         </div>
       </div>
       {taskConclusion ? <TaskConclusionCard conclusion={taskConclusion} /> : null}
-      {analysisOpen ? <AuditAnalysisModal analysis={analysis} onClose={() => setAnalysisOpen(false)} /> : null}
+      {analysisOpen ? <AuditAnalysisModal analysis={analysis} ai={audit.ai} onClose={() => setAnalysisOpen(false)} /> : null}
     </>
   );
 }
@@ -694,7 +696,7 @@ function TaskConclusionCard({ conclusion }) {
     <section className={cn('task-conclusion-card', `is-${conclusion.status || 'review'}`)}>
       <div>
         <Badge variant={conclusion.status === 'blocked' ? 'blocker' : conclusion.status === 'needs-fix' ? 'major' : 'minor'}>
-          {conclusion.label || '任务验收结论'}
+          {conclusion.label || '任务走查结论'}
         </Badge>
         <h3>{conclusion.task || '页面任务路径'}</h3>
         <p>{conclusion.verdict}</p>
@@ -707,10 +709,10 @@ function TaskConclusionCard({ conclusion }) {
   );
 }
 
-function AuditAnalysisModal({ analysis, onClose }) {
+function AuditAnalysisModal({ analysis, ai, onClose }) {
   const pieStyle = { background: distributionPieGradient(analysis.distribution) };
 
-  return (
+  return createPortal(
     <div className="analysis-modal" role="dialog" aria-modal="true" aria-labelledby="analysis-title">
       <button className="modal-backdrop" type="button" aria-label="关闭完整分析报告" onClick={onClose} />
       <article className="analysis-modal-content">
@@ -719,7 +721,7 @@ function AuditAnalysisModal({ analysis, onClose }) {
         </Button>
         <header className="analysis-report-header">
           <p><Sparkles className="h-4 w-4" />AI 完整分析</p>
-          <h3 id="analysis-title">本次无障碍审计总结</h3>
+          <h3 id="analysis-title">本次无障碍走查总结</h3>
           <strong>{analysis.shortSummary}</strong>
         </header>
         <section className="analysis-section">
@@ -759,8 +761,12 @@ function AuditAnalysisModal({ analysis, onClose }) {
           <h4>修复策略建议</h4>
           <p>{analysis.repairSummary}</p>
         </section>
+        <section className="analysis-section">
+          <SemanticFindings ai={ai} />
+        </section>
       </article>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1154,15 +1160,17 @@ function insightSeverityRank(severity) {
   }[severity] || 0;
 }
 
-function SemanticFindings({ findings }) {
-  const visibleFindings = meaningfulSemanticFindings(findings);
-  if (!visibleFindings.length) {
-    return null;
-  }
+function SemanticFindings({ ai }) {
+  const visibleFindings = meaningfulSemanticFindings(ai?.semanticFindings || []);
+  const state = semanticReviewState(ai, visibleFindings.length);
 
   return (
     <div className="ai-findings">
-      <strong>AI 语义复核</strong>
+      <div className="ai-findings-header">
+        <strong>AI 语义复核</strong>
+        <Badge variant={state.badge}>{state.label}</Badge>
+      </div>
+      <p className="ai-muted">{state.description}</p>
       {visibleFindings.map((finding) => {
         const meta = severityMeta[finding.severity] || severityMeta.Suggestion;
         return (
@@ -1180,6 +1188,40 @@ function SemanticFindings({ findings }) {
       })}
     </div>
   );
+}
+
+function semanticReviewState(ai, findingCount) {
+  if (!ai) {
+    return {
+      label: '未运行',
+      badge: 'default',
+      description: '本次报告没有 AI 语义复核记录。',
+    };
+  }
+
+  if (ai.status === 'enabled') {
+    return {
+      label: findingCount ? `${findingCount} 项` : '已运行',
+      badge: findingCount ? 'minor' : 'default',
+      description: findingCount
+        ? 'AI 已基于页面证据补充语义类复核项。'
+        : 'AI 已参与本次走查，未发现额外语义复核项。',
+    };
+  }
+
+  if (ai.status === 'failed') {
+    return {
+      label: '降级',
+      badge: 'major',
+      description: `AI 语义复核调用失败，报告已使用自动规则和本地降级分析继续生成。${ai.error ? `原因：${ai.error}` : ''}`,
+    };
+  }
+
+  return {
+    label: '未运行',
+    badge: 'default',
+    description: ai.reason ? `AI 语义复核未运行：${ai.reason}` : 'AI 语义复核未运行。',
+  };
 }
 
 function IssueGroupCard({ group, onOpenScreenshot }) {
@@ -1676,19 +1718,32 @@ function HistoryPage() {
     <main className={cn('workspace history-workspace', selectedReport && 'is-reading')}>
       <section className="page-hero history-hero backdrop-blur-xl">
         <Button asChild variant="ghost" size="icon" className="history-back-button">
-          <a href="/" aria-label="返回审计台">
+          <a href="/" aria-label="返回易达">
             <ArrowLeft className="h-5 w-5" />
           </a>
         </Button>
-        <h1>历史报告</h1>
+        <div className="history-nav-brand">
+          <span className="history-nav-summary" aria-label="已存档报告数量">
+            已存档报告 <strong>{reports.length}</strong>
+          </span>
+          <span className="history-nav-summary history-nav-summary-latest" aria-label="最近一次记录">
+            最近一次记录 <strong>{reports[0] ? formatDate(reports[0].generatedAt) : '—'}</strong>
+          </span>
+        </div>
       </section>
       <section
-        className={cn('history-shell', selectedReport && 'has-detail')}
+        className={cn('history-shell', selectedReport && 'has-detail', loading && 'is-loading')}
         ref={historyShellRef}
       >
         <section className={cn('history-panel', loading && 'is-loading')}>
-          {loading ? <EmptyState title="正在加载" description="正在读取本地报告记录。" loading className="history-loading-state" /> : null}
-          {!loading && !reports.length ? <EmptyState title="暂无历史报告" description="完成一次审计后，报告会出现在这里。" /> : null}
+          {loading ? (
+            <div className="history-loading-state" role="status" aria-live="polite">
+              <div className="empty-mark" aria-hidden="true" />
+              <h3>正在加载</h3>
+              <p>正在读取本地报告记录。</p>
+            </div>
+          ) : null}
+          {!loading && !reports.length ? <EmptyState title="暂无历史报告" description="完成一次走查后，报告会出现在这里。" /> : null}
           {reports.length ? (
             <div className="history-list">
               {reports.map((report) => (
@@ -1726,7 +1781,7 @@ function HistoryPage() {
               action={selectedAudit ? <ExportMenu links={selectedReport.links} /> : null}
             />
             <div className="result-content">
-              {detailLoading ? <EmptyState title="正在加载报告" description="正在读取这次审计的完整结果。" /> : null}
+              {detailLoading ? <EmptyState title="正在加载报告" description="正在读取这次走查的完整结果。" /> : null}
               {!detailLoading && detailError ? <EmptyState title="报告读取失败" description={detailError} /> : null}
               {!detailLoading && !detailError && selectedAudit ? (
                 <ReportDetailContent
@@ -1948,8 +2003,8 @@ function summarySentence(summary = {}, aiSummary = {}) {
 
 function cleanAiVerdict(text = '') {
   const cleaned = String(text)
-    .replace(/^本次审计发现\s*\d+\s*个问题，?其中阻断\s*\d+\s*个、?严重\s*\d+\s*个。?\s*/u, '')
-    .replace(/^本次审计发现\s*\d+\s*个问题。?\s*/u, '')
+    .replace(/^本次(?:审计|走查)发现\s*\d+\s*个问题，?其中阻断\s*\d+\s*个、?严重\s*\d+\s*个。?\s*/u, '')
+    .replace(/^本次(?:审计|走查)发现\s*\d+\s*个问题。?\s*/u, '')
     .trim();
   return isLowValueAiSummaryItem(cleaned) ? '' : cleaned;
 }
@@ -1982,12 +2037,12 @@ function meaningfulSemanticFindings(findings) {
 async function readJsonResponse(response) {
   const raw = await response.text();
   if (!raw.trim()) {
-    throw new Error('后端服务未返回数据，请确认 3000 端口的审计服务已启动。');
+    throw new Error('后端服务未返回数据，请确认 3000 端口的走查服务已启动。');
   }
   try {
     return JSON.parse(raw);
   } catch {
-    throw new Error('后端服务返回了非 JSON 内容，请检查本地审计服务状态。');
+    throw new Error('后端服务返回了非 JSON 内容，请检查本地走查服务状态。');
   }
 }
 

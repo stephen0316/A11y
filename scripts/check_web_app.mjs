@@ -13,20 +13,26 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 
 try {
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
-  await assertVisibleText(page, '无障碍验收台');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: 'networkidle' });
+  await assertVisibleText(page, '易达');
   await assertVisibleText(page, '历史报告');
 
   await page.getByLabel('URL').fill(`file://${path.resolve('examples/sample-target.html')}`);
   await page.getByLabel('页面名称').fill('示例缺陷页');
-  await page.getByLabel('启用 AI 语义复核').uncheck();
+  assert.equal(await page.getByLabel('启用 AI 语义复核').count(), 0, 'AI semantic review should not be a user-facing option');
   assert.equal(await page.getByLabel('任务路径').count(), 0, 'Natural language task field should be hidden by default');
   await page.getByLabel('启用自然语言任务').check();
   await page.getByLabel('任务路径').fill('邮箱: qa@example.com，密码: test123，然后等待 toast');
   await page.getByRole('button', { name: '生成步骤' }).click();
   await assertVisibleText(page, '本地规则生成');
   await assertVisibleText(page, '填写邮箱');
-  await page.getByRole('button', { name: '开始审计' }).click();
-  await assertVisibleText(page, '已自动执行 3 个任务步骤并在最终状态完成审计');
+  await page.getByRole('button', { name: '开始走查' }).click();
+  await assertVisiblePattern(page, /已自动执行 \d+ 个任务步骤并在最终状态完成走查/);
+  assert.equal(await page.locator('.result-content > .ai-findings').count(), 0, 'AI semantic review should not appear on the home result surface');
+  await page.getByRole('button', { name: /查看完整分析/ }).click();
+  await assertVisibleText(page, 'AI 语义复核');
+  await page.locator('.analysis-modal .modal-close').click();
   await assertVisibleText(page, '文字颜色对比度不足');
   await assertVisibleText(page, '图片缺少替代文本');
   await page.getByLabel('查看完整页面截图').waitFor({ timeout: 8000 });
@@ -47,11 +53,11 @@ try {
   await page.reload({ waitUntil: 'networkidle' });
   await assertVisibleText(page, '文字颜色对比度不足');
 
-  await page.getByRole('button', { name: '新建审计' }).click();
-  await assertVisibleText(page, '等待审计结果');
+  await page.getByRole('button', { name: '新建走查' }).click();
+  await assertVisibleText(page, '等待走查结果');
 
   await page.getByRole('link', { name: '历史报告' }).click();
-  await assertVisibleText(page, '历史报告');
+  await assertVisibleText(page, '已存档报告');
   await assertVisibleText(page, '示例缺陷页');
 
   await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -64,4 +70,10 @@ async function assertVisibleText(page, text) {
   const locator = page.getByText(text).first();
   await locator.waitFor({ timeout: 30000 });
   assert.equal(await locator.isVisible(), true, `Expected visible text: ${text}`);
+}
+
+async function assertVisiblePattern(page, pattern) {
+  const locator = page.getByText(pattern).first();
+  await locator.waitFor({ timeout: 30000 });
+  assert.equal(await locator.isVisible(), true, `Expected visible text matching: ${pattern}`);
 }

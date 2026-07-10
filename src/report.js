@@ -6,7 +6,7 @@ export function renderMarkdownReport(audit) {
   const enhancementByIssue = new Map((ai?.issueEnhancements || []).map((item) => [item.issueId, item]));
   const lines = [];
 
-  lines.push(`# ${meta.target.name} 无障碍验收报告`);
+  lines.push(`# ${meta.target.name} 易达走查报告`);
   lines.push('');
   lines.push(`- URL: ${meta.target.url}`);
   lines.push(`- 基线: ${meta.baseline}`);
@@ -20,7 +20,7 @@ export function renderMarkdownReport(audit) {
   lines.push('');
 
   if (meta.taskConclusion) {
-    lines.push('## 任务级验收结论');
+    lines.push('## 任务级走查结论');
     lines.push('');
     lines.push(...renderTaskConclusion(meta.taskConclusion));
     lines.push('');
@@ -39,7 +39,7 @@ export function renderMarkdownReport(audit) {
     lines.push(`- ${tier}: ${summary.byTier[tier] || 0}`);
   }
   lines.push('');
-  lines.push('## AI 审计摘要');
+  lines.push('## AI 走查摘要');
   lines.push('');
   lines.push(...renderAiSummary(ai));
   lines.push('');

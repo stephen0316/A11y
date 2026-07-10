@@ -217,8 +217,10 @@ test('runAiAudit retries transient model failures before fallback', async () => 
   assert.deepEqual(result.attemptedModels, ['gemini-3.5-flash', 'gemini-2.5-flash']);
 });
 
-test('runAiAudit requests low thinking level by default to reduce latency', async () => {
+test('runAiAudit omits Gemini thinking config by default for model compatibility', async () => {
   let generationConfig;
+  const previousLevel = process.env.GEMINI_THINKING_LEVEL;
+  delete process.env.GEMINI_THINKING_LEVEL;
   const aiPayload = {
     summary: {
       verdict: 'ok',
@@ -230,22 +232,99 @@ test('runAiAudit requests low thinking level by default to reduce latency', asyn
     issueEnhancements: [],
   };
 
-  await runAiAudit(sampleInput, {
-    enabled: true,
-    apiKey: 'test-key',
-    maxAttempts: 1,
-    fetchImpl: async (_url, init) => {
-      generationConfig = JSON.parse(init.body).generation_config;
-      return {
-        ok: true,
-        json: async () => ({ output_text: JSON.stringify(aiPayload) }),
-      };
-    },
-  });
+  try {
+    await runAiAudit(sampleInput, {
+      enabled: true,
+      apiKey: 'test-key',
+      maxAttempts: 1,
+      fetchImpl: async (_url, init) => {
+        generationConfig = JSON.parse(init.body).generation_config;
+        return {
+          ok: true,
+          json: async () => ({ output_text: JSON.stringify(aiPayload) }),
+        };
+      },
+    });
+  } finally {
+    restoreEnv('GEMINI_THINKING_LEVEL', previousLevel);
+  }
 
   assert.equal(generationConfig.temperature, 0.2);
-  assert.equal(generationConfig.thinking_level, 'low');
+  assert.equal('thinking_level' in generationConfig, false);
+  assert.equal('thinking_budget' in generationConfig, false);
 });
+
+test('runAiAudit ignores unsupported low and medium Gemini thinking levels', async () => {
+  let generationConfig;
+  const previousLevel = process.env.GEMINI_THINKING_LEVEL;
+  process.env.GEMINI_THINKING_LEVEL = 'medium';
+
+  try {
+    await runAiAudit(sampleInput, {
+      enabled: true,
+      apiKey: 'test-key',
+      maxAttempts: 1,
+      fetchImpl: async (_url, init) => {
+        generationConfig = JSON.parse(init.body).generation_config;
+        return {
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              summary: { verdict: 'ok', riskLevel: 'low', keyFindings: [], recommendedNextSteps: [] },
+              semanticFindings: [],
+              issueEnhancements: [],
+            }),
+          }),
+        };
+      },
+    });
+  } finally {
+    restoreEnv('GEMINI_THINKING_LEVEL', previousLevel);
+  }
+
+  assert.equal('thinking_level' in generationConfig, false);
+  assert.equal('thinking_budget' in generationConfig, false);
+});
+
+test('runAiAudit allows explicit high Gemini thinking level', async () => {
+  let generationConfig;
+  const previousLevel = process.env.GEMINI_THINKING_LEVEL;
+  process.env.GEMINI_THINKING_LEVEL = 'high';
+
+  try {
+    await runAiAudit(sampleInput, {
+      enabled: true,
+      apiKey: 'test-key',
+      maxAttempts: 1,
+      fetchImpl: async (_url, init) => {
+        generationConfig = JSON.parse(init.body).generation_config;
+        return {
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              summary: { verdict: 'ok', riskLevel: 'low', keyFindings: [], recommendedNextSteps: [] },
+              semanticFindings: [],
+              issueEnhancements: [],
+            }),
+          }),
+        };
+      },
+    });
+  } finally {
+    restoreEnv('GEMINI_THINKING_LEVEL', previousLevel);
+  }
+
+  assert.equal(generationConfig.thinking_level, 'high');
+  assert.equal('thinking_budget' in generationConfig, false);
+});
+
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
 
 test('runAiAudit fails closed when Gemini returns malformed data', async () => {
   const result = await runAiAudit(sampleInput, {
