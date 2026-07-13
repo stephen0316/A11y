@@ -5,8 +5,8 @@ const DEFAULT_STEP_TIMEOUT_MS = 45000;
 const STEP_SYSTEM_INSTRUCTION = `
 你是 Web QA 自动化步骤生成器。你只把自然语言任务转换成 Playwright 可执行步骤，不做无障碍走查结论。
 输出必须是 JSON，不要输出 Markdown。
-步骤只能使用 action: fill, click, press, waitForSelector, wait。
-尽量为 click/fill/waitForSelector 提供 selectors 候选数组，并补充 label、role、name 或 text 作为回退。
+步骤只能使用 action: fill, hover, click, press, waitForSelector, wait。
+尽量为 hover/click/fill/waitForSelector 提供 selectors 候选数组，并补充 label、role、name 或 text 作为回退。
 不要发明账号、密码、验证码或业务数据；如果自然语言没有提供输入值，就不要生成对应 fill 步骤。
 `.trim();
 
@@ -224,6 +224,7 @@ function buildStepPrompt({ instruction, target, localPlan }) {
     JSON.stringify(localPlan, null, 2),
     '输出字段要求：',
     '- steps 中每步都写 description，方便 QA 复核。',
+    '- hover 用于“悬停、hover、鼠标移入、鼠标放到”等任务；下拉菜单通常先 hover 再 waitForSelector 再 click。',
     '- click 优先给 role/name，例如 role=button name=登录；同时给常见 selectors。',
     '- fill 如果能判断字段名，给 label 和 selectors；value 必须来自任务描述。',
     '- 等待 toast、结果、弹窗时使用 waitForSelector，并给 status/dialog/toast 等候选 selectors。',
@@ -253,6 +254,11 @@ function stepsFromSegment(segment) {
   const fills = parseFillSteps(value);
   if (fills.length) {
     return fills;
+  }
+
+  const hoverName = parseHoverName(value);
+  if (hoverName) {
+    return [buildHoverStep(hoverName, value)];
   }
 
   if (/等待|出现|看到|显示|toast|提示|弹窗|dialog|结果|成功|失败|报错|错误|loading|加载/i.test(value)) {
@@ -340,6 +346,18 @@ function buildClickStep(name, segment) {
   };
 }
 
+function buildHoverStep(name, segment) {
+  return {
+    action: 'hover',
+    selector: selectorsForControl(name)[0],
+    selectors: selectorsForControl(name),
+    role: 'button',
+    name,
+    text: name,
+    description: segment.includes(name) ? segment : `悬停${name}`,
+  };
+}
+
 function buildWaitForStep(segment) {
   const isDialog = /弹窗|dialog|抽屉|modal/i.test(segment);
   const isStatus = /toast|提示|成功|失败|报错|错误|状态|loading|加载|结果/i.test(segment);
@@ -405,12 +423,35 @@ function selectorsForControl(name) {
 }
 
 function parseClickName(segment) {
+  const quoted = matchAll(segment, /["“']([^"”']+)["”']/g).map((match) => cleanControlName(match[1])).filter(Boolean);
+  if (quoted.length && /(?:点击|单击|点|打开|选择|进入|提交|保存|确认|关闭)/i.test(segment)) {
+    return quoted[quoted.length - 1];
+  }
+
   const direct = segment.match(/(?:点击|单击|点|打开|选择|进入|提交|保存|确认|关闭)\s*["“']?([^"”'，。；;、]+)["”']?/i);
   if (direct) {
     const name = cleanControlName(direct[1]);
     return name || directVerbName(segment);
   }
   return directVerbName(segment);
+}
+
+function parseHoverName(segment) {
+  if (!/(?:hover|悬停|鼠标(?:移入|移到|移动到|放到|停在)|移入|移到)/i.test(segment)) {
+    return '';
+  }
+
+  const quoted = matchAll(segment, /["“']([^"”']+)["”']/g).map((match) => cleanControlName(match[1])).filter(Boolean);
+  if (quoted.length) {
+    return quoted[quoted.length - 1];
+  }
+
+  const direct = segment.match(/(?:hover|悬停|鼠标(?:移入|移到|移动到|放到|停在)|移入|移到)(?:在|到|至)?\s*([^，。；;、]+?)(?:菜单|导航|栏目|入口|按钮|链接)?$/i);
+  if (direct) {
+    return cleanControlName(direct[1]);
+  }
+
+  return '';
 }
 
 function directVerbName(segment) {
@@ -469,7 +510,7 @@ function normalizeGeneratedStep(step) {
     return null;
   }
   const action = String(step.action || '').trim();
-  if (!['fill', 'click', 'press', 'waitForSelector', 'wait'].includes(action)) {
+  if (!['fill', 'hover', 'click', 'press', 'waitForSelector', 'wait'].includes(action)) {
     return null;
   }
   const selectors = unique([
@@ -521,6 +562,9 @@ function descriptionForStep(step) {
   }
   if (step.action === 'click') {
     return `点击${step.name || step.text || step.selector || '控件'}`;
+  }
+  if (step.action === 'hover') {
+    return `悬停${step.name || step.text || step.selector || '控件'}`;
   }
   if (step.action === 'press') {
     return `按 ${step.key || 'Enter'}`;

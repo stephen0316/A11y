@@ -168,7 +168,7 @@ legend {
 }
 
 .field-hint {
-  margin: 0 0 12px;
+  margin: 0 0 16px;
   color: hsl(var(--muted-foreground));
   font-size: 13px;
   font-weight: 650;
@@ -220,13 +220,13 @@ legend {
 
 .step-list {
   display: grid;
-  gap: 10px;
 }
 
 .step-row {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr) minmax(0, 1fr) 40px;
-  gap: 8px;
+  row-gap: 0px;
+  column-gap: 8px;
 }
 
 .task-actions {
@@ -254,7 +254,8 @@ legend {
 
 .step-plan-note p,
 .step-description {
-  margin: 0;
+  margin-top: 6px;
+  margin-bottom: 16px;
   color: rgb(55 65 81);
   font-size: 13px;
   line-height: 1.5;
@@ -298,24 +299,30 @@ legend {
 
 .task-conclusion-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   align-items: start;
   margin: -6px 0 24px;
   border: 1px solid rgb(203 213 225);
-  border-left: 4px solid rgb(37 99 235);
   border-radius: 8px;
   background: white;
   padding: 16px 18px;
   box-shadow: 0 12px 30px rgb(15 23 42 / 0.06);
 }
 
-.task-conclusion-card.is-blocked {
-  border-left-color: rgb(220 38 38);
-}
-
 .task-conclusion-card.is-needs-fix {
   border-left-color: rgb(234 88 12);
+}
+
+.task-conclusion-status-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.task-plan-badge {
+  font-size: 12px;
 }
 
 .task-conclusion-card h3 {
@@ -333,13 +340,112 @@ legend {
   line-height: 1.65;
 }
 
-.task-conclusion-meta {
+.task-issue-groups {
+  grid-column: 1 / -1;
   display: grid;
-  justify-items: end;
-  gap: 6px;
-  color: rgb(75 85 99);
+  gap: 12px;
+  border-top: 1px solid rgb(226 232 240);
+  padding-top: 14px;
+}
+
+.task-issue-groups-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-issue-groups-title strong {
+  color: rgb(17 24 39);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.task-issue-groups-title small {
+  display: block;
+  margin-top: 3px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.task-issue-group-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.task-issue-group {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 8px;
+  background: rgb(248 250 252);
+  padding: 12px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.task-issue-group:hover,
+.task-issue-group.is-active {
+  border-color: rgb(37 99 235 / 0.46);
+  background: rgb(239 246 255);
+  box-shadow: 0 8px 18px rgb(37 99 235 / 0.08);
+}
+
+.task-issue-group:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 0.3);
+  outline-offset: 3px;
+}
+
+.task-state-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -8px 0 14px;
+  border: 1px solid rgb(147 197 253 / 0.55);
+  border-radius: 8px;
+  background: rgb(239 246 255);
+  padding: 8px 12px;
+  color: rgb(30 64 175);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.task-state-filter .inline-flex {
+  flex: 0 0 auto;
+  color: rgb(29 78 216);
+}
+
+.task-issue-group > div {
+  display: grid;
+  gap: 3px;
+}
+
+.task-issue-group strong {
+  color: rgb(17 24 39);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.task-issue-group > div span {
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.task-issue-group p {
+  margin: 0;
+  color: rgb(75 85 99);
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .ai-card {
@@ -1035,6 +1141,43 @@ legend {
   display: block;
 }
 
+.screenshot-modal-content {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: rgb(15 23 42);
+}
+
+.screenshot-modal-shell {
+  position: relative;
+  z-index: 1;
+  width: min(1180px, 92vw);
+  height: min(840px, 88vh);
+  max-height: min(840px, 88vh);
+}
+
+.screenshot-modal-shell > .modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  float: none;
+  margin: 0;
+  z-index: 3;
+  background: rgb(255 255 255 / 0.94);
+}
+
+.screenshot-modal-content .screenshot-stage {
+  min-width: 100%;
+  background: rgb(148 163 184);
+}
+
+.screenshot-modal-content img {
+  width: 100%;
+  height: auto;
+}
+
 .analysis-modal-content {
   position: relative;
   z-index: 1;
@@ -1658,6 +1801,16 @@ legend {
   z-index: 1;
 }
 
+.home-workspace > .screenshot-modal,
+.home-workspace > .analysis-modal {
+  position: fixed;
+  z-index: 80;
+}
+
+.home-workspace > .analysis-modal {
+  z-index: 85;
+}
+
 .home-workspace .page-hero {
   width: min(1440px, 100%);
   margin: 0 auto 48px;
@@ -1744,7 +1897,7 @@ legend {
 
 .home-workspace .panel-body,
 .home-workspace .result-content {
-  padding: 22px 26px 28px;
+  padding: 20px 24px 20px;
 }
 
 .home-workspace .field-label,
@@ -1877,6 +2030,23 @@ legend {
   border-top-color: rgb(143 181 198 / 0.24);
 }
 
+.home-workspace .task-issue-groups {
+  border-top-color: rgb(143 181 198 / 0.24);
+}
+
+.home-workspace .task-issue-group {
+  border-color: rgb(143 181 198 / 0.24);
+  background: rgb(246 251 252 / 0.78);
+}
+
+.home-workspace .task-issue-group strong {
+  color: #17334a;
+}
+
+.home-workspace .task-issue-group p {
+  color: #4f6a7d;
+}
+
 .home-workspace .summary-ai-title > div > span,
 .home-workspace .summary-analysis-button,
 .home-workspace .ai-summary-title {
@@ -2005,8 +2175,9 @@ legend {
     flex-direction: column;
   }
 
-  .task-conclusion-meta {
-    justify-items: start;
+  .task-issue-groups-title {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .summary-brief {
@@ -3227,4 +3398,35 @@ legend {
 
 .history-workspace.is-reading .history-detail-panel .result-content {
   border-radius: 0 0 16px 16px;
+}
+
+/* Responsive metrics: respond to the result column width, not only viewport width. */
+.home-workspace .result-content {
+  container: result-content / inline-size;
+}
+
+.home-workspace .summary-strip {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.1fr);
+}
+
+.home-workspace .summary-strip > * {
+  min-width: 0;
+}
+
+@container result-content (max-width: 840px) {
+  .home-workspace .summary-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container result-content (max-width: 560px) {
+  .home-workspace .summary-metric-row,
+  .home-workspace .summary-ai-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .home-workspace .summary-total span {
+    white-space: normal;
+  }
 }

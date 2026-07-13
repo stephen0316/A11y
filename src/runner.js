@@ -18,13 +18,32 @@ const WCAG_22_AA_TAGS = [
 ];
 
 export async function runTargetAudit(page, target, options = {}) {
-  await page.goto(target.url, { waitUntil: 'networkidle' });
-  const scenarioExecution = await runScenarioSteps(page, target.steps);
-
   const stamp = nowStamp();
   const runName = `${slugify(target.name)}-${stamp}`;
   const targetDir = path.resolve(options.outDir || 'reports', runName);
   await mkdir(targetDir, { recursive: true });
+
+  await page.goto(target.url, { waitUntil: 'networkidle' });
+  const flowSnapshots = [];
+  const scenarioExecution = await runScenarioSteps(page, target.steps, {
+    onAfterStep: async ({ step, index, entry, stateFingerprint, navigated }) => {
+      const snapshot = await collectFlowStepSnapshot(page, {
+        target,
+        step,
+        index,
+        entry,
+        stateFingerprint,
+        navigated,
+        maxTabs: options.maxTabs || 30,
+        targetDir,
+      });
+      flowSnapshots.push(snapshot);
+      return {
+        issueCount: snapshot.summary.total,
+        bySeverity: snapshot.summary.bySeverity,
+      };
+    },
+  });
 
   const screenshotPath = path.join(targetDir, 'screenshot.png');
   const domPath = path.join(targetDir, 'dom-snapshot.html');
@@ -35,24 +54,34 @@ export async function runTargetAudit(page, target, options = {}) {
   await page.screenshot({ path: screenshotPath, fullPage: true });
   const domHtml = await page.content();
   await writeFile(domPath, domHtml, 'utf8');
+  // Capture before keyboard traversal changes focus, so final-state matching
+  // compares the same visual and semantic state as the task-step snapshot.
+  const finalStateFingerprint = flowStateFingerprint(await captureFlowState(page));
 
-  const axe = await new AxeBuilder({ page })
-    .withTags(WCAG_22_AA_TAGS)
-    .analyze();
-  await attachAxeNodeRects(page, axe);
-  const domSignals = await collectDomSignals(page);
-  const keyboard = await runKeyboardAudit(page, {
+  const {
+    axe,
+    domSignals,
+    keyboard,
+  } = await collectAuditState(page, {
     maxTabs: options.maxTabs || 30,
+    includeKeyboard: true,
   });
   const accessibilityTree = await collectAccessibilityTree(page);
   await writeFile(axTreePath, JSON.stringify(accessibilityTree, null, 2), 'utf8');
 
-  const issues = buildIssues({
+  const finalIssues = buildIssues({
     target,
     axe,
     domSignals,
     keyboard,
   });
+  const finalStateResult = mergeFinalAuditIntoFlowState({
+    flowSnapshots,
+    finalIssues,
+    finalStateFingerprint,
+    finalUrl: page.url(),
+  });
+  const issues = finalStateResult.issues;
   const ai = await runAiAudit({
     target,
     axe,
@@ -60,6 +89,7 @@ export async function runTargetAudit(page, target, options = {}) {
     keyboard,
     accessibilityTree,
     issues,
+    flowSnapshots,
   }, options.ai || {});
 
   const audit = {
@@ -71,10 +101,19 @@ export async function runTargetAudit(page, target, options = {}) {
         target,
         issues,
         scenarioExecution,
+        flowSnapshots,
         finalUrl: page.url(),
+        finalStateMergedIntoStep: finalStateResult.mergedIntoStep,
+        finalStateMergeReason: finalStateResult.mergeReason,
       }),
       artifacts: {
         screenshot: 'screenshot.png',
+        flowScreenshots: flowSnapshots
+          .filter((snapshot) => snapshot.screenshot)
+          .map((snapshot) => ({
+            index: snapshot.index,
+            screenshot: snapshot.screenshot,
+          })),
         domSnapshot: 'dom-snapshot.html',
         accessibilityTree: 'accessibility-tree.json',
       },
@@ -98,12 +137,17 @@ export async function runTargetAudit(page, target, options = {}) {
   };
 }
 
-async function runScenarioSteps(page, steps = []) {
+export async function runScenarioSteps(page, steps = [], options = {}) {
   const log = [];
-  for (const step of steps) {
+  let previousState = await captureFlowState(page);
+  let lastChangedStep = null;
+
+  for (const [index, step] of steps.entries()) {
     const startedAt = Date.now();
     if (step.action === 'fill') {
       await fillStep(page, step);
+    } else if (step.action === 'hover') {
+      await hoverStep(page, step);
     } else if (step.action === 'click') {
       await clickStep(page, step);
     } else if (step.action === 'press') {
@@ -115,14 +159,283 @@ async function runScenarioSteps(page, steps = []) {
     } else {
       throw new Error(`Unsupported scenario step action: ${step.action}`);
     }
-    log.push({
+    const entry = {
       action: step.action,
       description: step.description || '',
       selector: step.selector || '',
       elapsedMs: Date.now() - startedAt,
-    });
+    };
+
+    await settleScenarioState(page);
+    const currentState = await captureFlowState(page);
+    const stateChanged = flowStateFingerprint(currentState) !== flowStateFingerprint(previousState);
+    const navigated = comparableUrl(currentState.url) !== comparableUrl(previousState.url);
+
+    if (stateChanged) {
+      const sample = options.onAfterStep
+        ? await options.onAfterStep({
+          step,
+          index,
+          entry,
+          stateFingerprint: flowStateFingerprint(currentState),
+          navigated,
+        })
+        : {};
+      entry.auditSample = {
+        ...sample,
+        stateChanged: true,
+        navigated,
+      };
+      lastChangedStep = index + 1;
+    } else {
+      entry.auditSample = {
+        stateChanged: false,
+        navigated: false,
+        reusedFromStep: lastChangedStep,
+      };
+    }
+
+    previousState = currentState;
+    log.push(entry);
   }
   return log;
+}
+
+async function settleScenarioState(page) {
+  if (typeof page.waitForLoadState === 'function') {
+    await page.waitForLoadState('domcontentloaded', { timeout: 2000 }).catch(() => {});
+  }
+  if (typeof page.waitForTimeout === 'function') {
+    await page.waitForTimeout(80);
+  }
+}
+
+async function captureFlowState(page) {
+  return page.evaluate(() => {
+    const visible = (element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0
+        && rect.height > 0
+        && style.visibility !== 'hidden'
+        && style.display !== 'none'
+        && Number(style.opacity || '1') > 0.01;
+    };
+    const textOf = (element) => (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    const markerFor = (element) => {
+      if (!element || element.nodeType !== Node.ELEMENT_NODE) {
+        return '';
+      }
+      if (element.id) {
+        return `#${element.id}`;
+      }
+      const classes = Array.from(element.classList || []).slice(0, 3).join('.');
+      return `${element.tagName.toLowerCase()}${classes ? `.${classes}` : ''}`;
+    };
+    const stateAttributes = [
+      'aria-expanded', 'aria-hidden', 'aria-selected', 'aria-checked', 'aria-current',
+      'aria-controls', 'aria-haspopup', 'aria-live', 'aria-modal', 'data-state',
+      'data-open', 'hidden', 'open',
+    ];
+    const stateSelector = [
+      'a[href]', 'button', 'input', 'select', 'textarea', 'summary', '[role]',
+      '[aria-expanded]', '[aria-hidden]', '[aria-live]', '[aria-modal]', '[data-state]',
+      '[data-open]', 'dialog', '[class*="menu" i]', '[class*="submenu" i]',
+      '[class*="dropdown" i]', '[class*="popover" i]', '[class*="tooltip" i]',
+      '[class*="drawer" i]', '[class*="dialog" i]',
+    ].join(',');
+    const elements = Array.from(document.querySelectorAll(stateSelector))
+      .filter(visible)
+      .map((element) => ({
+        marker: markerFor(element),
+        tag: element.tagName.toLowerCase(),
+        role: element.getAttribute('role') || '',
+        text: textOf(element),
+        className: typeof element.className === 'string' ? element.className : '',
+        value: ['input', 'select', 'textarea'].includes(element.tagName.toLowerCase()) ? element.value || '' : '',
+        checked: 'checked' in element ? Boolean(element.checked) : false,
+        attributes: Object.fromEntries(stateAttributes
+          .filter((name) => element.hasAttribute(name))
+          .map((name) => [name, element.getAttribute(name) || ''])),
+      }));
+
+    return {
+      url: window.location.href,
+      title: document.title,
+      bodyClassName: document.body.className || '',
+      activeElement: markerFor(document.activeElement),
+      elements,
+    };
+  });
+}
+
+function flowStateFingerprint(state) {
+  return JSON.stringify(state || {});
+}
+
+async function collectFlowStepSnapshot(page, { target, step, index, entry, stateFingerprint, navigated, maxTabs, targetDir }) {
+  const {
+    axe,
+    domSignals,
+    keyboard,
+  } = await collectAuditState(page, {
+    maxTabs,
+    includeKeyboard: false,
+  });
+  const stepInfo = {
+    index: index + 1,
+    action: step.action,
+    description: step.description || '',
+    selector: step.selector || '',
+    url: page.url(),
+  };
+  const issues = buildIssues({
+    target,
+    axe,
+    domSignals,
+    keyboard,
+  }).map((issue) => annotateFlowStepIssue(issue, stepInfo));
+  const screenshot = `flow-step-${index + 1}.png`;
+  await page.screenshot({ path: path.join(targetDir, screenshot), fullPage: true });
+
+  return {
+    ...stepInfo,
+    elapsedMs: entry.elapsedMs,
+    stateFingerprint,
+    navigated,
+    title: domSignals?.title || '',
+    screenshot,
+    summary: summarizeIssues(issues),
+    issues,
+  };
+}
+
+async function collectAuditState(page, { maxTabs = 30, includeKeyboard = true } = {}) {
+  const axe = await new AxeBuilder({ page })
+    .withTags(WCAG_22_AA_TAGS)
+    .analyze();
+  await attachAxeNodeRects(page, axe);
+  const domSignals = await collectDomSignals(page);
+  const keyboard = includeKeyboard
+    ? await runKeyboardAudit(page, { maxTabs })
+    : emptyKeyboardAudit(maxTabs);
+
+  return {
+    axe,
+    domSignals,
+    keyboard,
+  };
+}
+
+function annotateFlowStepIssue(issue, stepInfo) {
+  const stepLabel = flowStepLabel(stepInfo);
+  return {
+    ...issue,
+    id: `FLOW-S${stepInfo.index}-${issue.id}`,
+    flowStep: stepInfo,
+    reproductionSteps: [
+      `执行任务步骤 ${stepInfo.index}：${stepLabel}`,
+      ...(issue.reproductionSteps || []),
+    ],
+    evidence: {
+      ...(issue.evidence || {}),
+      flowStep: stepInfo,
+    },
+  };
+}
+
+function flowStepLabel(stepInfo) {
+  return stepInfo.description || [stepInfo.action, stepInfo.selector].filter(Boolean).join(' ') || '未命名步骤';
+}
+
+function emptyKeyboardAudit(maxTabs) {
+  return {
+    maxTabs,
+    uniqueFocusedCount: 0,
+    possibleTrap: false,
+    path: [],
+    focusVisibleFailures: [],
+  };
+}
+
+function dedupeIssues(issues) {
+  const seen = new Set();
+  return issues.filter((issue) => {
+    const key = issueSignature(issue);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+export function mergeFinalAuditIntoFlowState({
+  flowSnapshots = [],
+  finalIssues = [],
+  finalStateFingerprint = '',
+  finalUrl = '',
+}) {
+  const lastSnapshot = flowSnapshots.at(-1);
+  const mergeReason = lastSnapshot && finalStateFingerprint && lastSnapshot.stateFingerprint === finalStateFingerprint
+    ? 'same-state'
+    : lastSnapshot?.navigated && comparableUrl(lastSnapshot.url) === comparableUrl(finalUrl)
+      ? 'completed-navigation'
+      : null;
+  if (!mergeReason) {
+    return {
+      mergedIntoStep: null,
+      mergeReason: null,
+      issues: dedupeIssues([
+        ...finalIssues,
+        ...flowSnapshots.flatMap((snapshot) => snapshot.issues),
+      ]),
+    };
+  }
+
+  const stepInfo = {
+    index: lastSnapshot.index,
+    action: lastSnapshot.action,
+    description: lastSnapshot.description,
+    selector: lastSnapshot.selector,
+    url: lastSnapshot.url,
+  };
+  const mergedStateIssues = dedupeIssues([
+    ...(lastSnapshot.issues || []),
+    ...finalIssues.map((issue) => annotateFlowStepIssue(issue, stepInfo)),
+  ]);
+  lastSnapshot.issues = mergedStateIssues;
+  lastSnapshot.summary = summarizeIssues(mergedStateIssues);
+
+  return {
+    mergedIntoStep: lastSnapshot.index,
+    mergeReason,
+    issues: dedupeIssues(flowSnapshots.flatMap((snapshot) => snapshot.issues)),
+  };
+}
+
+function comparableUrl(value) {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    return url.href;
+  } catch {
+    return String(value || '');
+  }
+}
+
+function issueSignature(issue) {
+  const evidence = issue.evidence || {};
+  return [
+    issue.title,
+    issue.severity,
+    issue.tier,
+    issue.ruleSource,
+    evidence.selector || evidence.target || '',
+    evidence.html || '',
+    evidence.failureSummary || '',
+    evidence.current || '',
+  ].map((item) => String(item || '').replace(/\s+/g, ' ').trim().toLowerCase()).join('|');
 }
 
 async function fillStep(page, step) {
@@ -180,6 +493,38 @@ async function clickStep(page, step) {
   throw new Error(`Unable to click step: ${step.description || step.selector || step.name || 'unknown control'}`);
 }
 
+async function hoverStep(page, step) {
+  const selectors = selectorCandidates(step);
+  for (const selector of selectors) {
+    try {
+      await page.hover(selector, { timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  if (step.role && step.name) {
+    try {
+      await page.getByRole(step.role, { name: step.name }).hover({ timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Continue to text fallback.
+    }
+  }
+
+  if (step.text || step.name) {
+    try {
+      await page.getByText(step.text || step.name).first().hover({ timeout: step.timeout || 5000 });
+      return;
+    } catch {
+      // Continue to the final error.
+    }
+  }
+
+  throw new Error(`Unable to hover step: ${step.description || step.selector || step.name || 'unknown control'}`);
+}
+
 async function waitForSelectorStep(page, step) {
   const selectors = selectorCandidates(step);
   for (const selector of selectors) {
@@ -210,7 +555,15 @@ function selectorCandidates(step) {
   ].filter(Boolean).map(String)));
 }
 
-function buildTaskConclusion({ target, issues, scenarioExecution, finalUrl }) {
+function buildTaskConclusion({
+  target,
+  issues,
+  scenarioExecution,
+  flowSnapshots,
+  finalUrl,
+  finalStateMergedIntoStep,
+  finalStateMergeReason,
+}) {
   if (!target.task && !scenarioExecution.length) {
     return null;
   }
@@ -228,19 +581,47 @@ function buildTaskConclusion({ target, issues, scenarioExecution, finalUrl }) {
     task: target.task || target.stepPlan?.task || '',
     status,
     label,
-    verdict: buildTaskVerdict({ blockerCount, majorCount, stepCount: scenarioExecution.length }),
+    verdict: buildTaskVerdict({
+      blockerCount,
+      majorCount,
+      scenarioExecution,
+      finalStateMergedIntoStep,
+      finalStateMergeReason,
+    }),
     generatedBy: target.stepPlan?.provider || 'manual',
     confidence: target.stepPlan?.confidence || 'medium',
     assumptions: target.stepPlan?.assumptions || [],
     warnings: target.stepPlan?.warnings || [],
     steps: scenarioExecution,
+    flowSnapshots: flowSnapshots.map(({ issues: _issues, stateFingerprint: _stateFingerprint, ...snapshot }) => snapshot),
     finalUrl,
+    finalStateMergedIntoStep,
+    finalStateMergeReason: finalStateMergeReason || null,
   };
 }
 
-function buildTaskVerdict({ blockerCount, majorCount, stepCount }) {
+function buildTaskVerdict({
+  blockerCount,
+  majorCount,
+  scenarioExecution = [],
+  finalStateMergedIntoStep = null,
+  finalStateMergeReason = null,
+}) {
+  const stepCount = scenarioExecution.length;
+  const unchangedStepNumbers = scenarioExecution
+    .map((step, index) => (step.auditSample?.stateChanged === false ? index + 1 : null))
+    .filter(Boolean);
+  const unchangedStepLabel = unchangedStepNumbers.map((number) => `第 ${number} 步`).join('、');
+  const unchangedStepNote = unchangedStepNumbers.length
+    ? ` ${unchangedStepLabel}未产生新的页面或无障碍语义状态，未单独计入问题。`
+    : '';
+  const finalStateNote = finalStateMergedIntoStep
+    ? finalStateMergeReason === 'completed-navigation'
+      ? ` 第 ${finalStateMergedIntoStep} 步已进入最终页面，完整检测结果已合并到该步骤。`
+      : ` 最终页面与第 ${finalStateMergedIntoStep} 步后状态一致，已合并为同一走查状态。`
+    : '';
   const prefix = stepCount
-    ? `已自动执行 ${stepCount} 个任务步骤并在最终状态完成走查。`
+    ? `已自动执行 ${stepCount} 个任务步骤，并对发生变化的流程状态与最终状态完成走查。${unchangedStepNote}${finalStateNote}`
     : '未执行前置任务步骤，已直接走查目标页面。';
 
   if (blockerCount) {

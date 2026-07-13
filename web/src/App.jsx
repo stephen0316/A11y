@@ -65,6 +65,7 @@ const viewportOptions = [
 
 const actionOptions = [
   { value: 'click', label: '点击' },
+  { value: 'hover', label: '悬停' },
   { value: 'fill', label: '输入' },
   { value: 'press', label: '按键' },
   { value: 'waitForSelector', label: '等待元素' },
@@ -206,6 +207,7 @@ function AuditPage() {
   const [audit, setAudit] = React.useState(null);
   const [links, setLinks] = React.useState(null);
   const [severityFilter, setSeverityFilter] = React.useState('all');
+  const [taskStateFilter, setTaskStateFilter] = React.useState('all');
   const [loading, setLoading] = React.useState(false);
   const [generatingSteps, setGeneratingSteps] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -238,6 +240,7 @@ function AuditPage() {
     setAudit(null);
     setLinks(null);
     setSeverityFilter('all');
+    setTaskStateFilter('all');
     setScreenshotTarget(null);
 
     try {
@@ -282,6 +285,7 @@ function AuditPage() {
     setAudit(null);
     setLinks(null);
     setSeverityFilter('all');
+    setTaskStateFilter('all');
     setError('');
     setScreenshotTarget(null);
   }
@@ -316,14 +320,17 @@ function AuditPage() {
 
   const filteredIssues = React.useMemo(() => {
     const issues = audit?.issues || [];
-    return issues.filter((issue) => severityFilter === 'all' || issue.severity === severityFilter);
-  }, [audit, severityFilter]);
+    return issues.filter((issue) => (
+      (severityFilter === 'all' || issue.severity === severityFilter)
+      && (taskStateFilter === 'all' || issueTaskStateKey(issue) === taskStateFilter)
+    ));
+  }, [audit, severityFilter, taskStateFilter]);
 
   return (
     <main className="workspace home-workspace">
       <section className="page-hero">
         <div>
-          <h1>易达</h1>
+          <h1>通见</h1>
           <p>基于 WCAG 标准、页面证据链和多模态 AI 推理的无障碍体验走查助手</p>
         </div>
         <div className="hero-actions">
@@ -417,7 +424,7 @@ function AuditPage() {
                 />
                 <span>
                   <strong>启用自然语言任务</strong>
-                  <em>需要先跑登录、表单提交、弹窗或 toast 等业务路径时再开启。</em>
+                  <em>需要先跑登录、表单提交、弹窗等业务路径时再开启</em>
                 </span>
               </label>
             </fieldset>
@@ -453,7 +460,7 @@ function AuditPage() {
 
                 <fieldset>
                   <legend>生成步骤预览</legend>
-                  <p className="field-hint">展示 AI 或本地规则生成的可执行步骤。需要时可以微调选择器和值，非必填。</p>
+                  <p className="field-hint">展示 AI 或本地规则生成的可执行步骤，可手动调整</p>
                   <div className="step-list">
                     {steps.map((step, index) => (
                       <div className="step-row" key={step.id}>
@@ -531,6 +538,8 @@ function AuditPage() {
                 links={links}
                 severityFilter={severityFilter}
                 onSeverityChange={setSeverityFilter}
+                taskStateFilter={taskStateFilter}
+                onTaskStateChange={setTaskStateFilter}
                 filteredIssues={filteredIssues}
                 onOpenScreenshot={(target) => setScreenshotTarget(target || { label: '完整页面截图' })}
               />
@@ -541,9 +550,9 @@ function AuditPage() {
         </section>
       </div>
 
-      {screenshotTarget && links?.screenshot ? (
+      {screenshotTarget && screenshotSrcForTarget(links, screenshotTarget) ? (
         <ScreenshotModal
-          src={links.screenshot}
+          src={screenshotSrcForTarget(links, screenshotTarget)}
           target={screenshotTarget}
           onClose={() => setScreenshotTarget(null)}
         />
@@ -561,16 +570,40 @@ function PanelHeader({ title, action }) {
   );
 }
 
-function ReportDetailContent({ audit, links, severityFilter, onSeverityChange, filteredIssues, onOpenScreenshot }) {
+function ReportDetailContent({ audit, links, severityFilter, onSeverityChange, taskStateFilter, onTaskStateChange, filteredIssues, onOpenScreenshot }) {
   const enhancementByIssue = React.useMemo(() => {
     return new Map((audit?.ai?.issueEnhancements || []).map((enhancement) => [enhancement.issueId, enhancement]));
   }, [audit]);
   const issueGroups = React.useMemo(() => groupIssuesForDisplay(filteredIssues, enhancementByIssue), [filteredIssues, enhancementByIssue]);
+  const taskScopedIssues = React.useMemo(() => {
+    if (taskStateFilter === 'all') {
+      return audit.issues || [];
+    }
+    return (audit.issues || []).filter((issue) => issueTaskStateKey(issue) === taskStateFilter);
+  }, [audit, taskStateFilter]);
+
+  function handleTaskStateChange(nextState) {
+    onTaskStateChange(nextState);
+  }
 
   return (
     <>
-      <SummaryStrip audit={audit} links={links} onOpenScreenshot={onOpenScreenshot} />
-      <SeverityPills audit={audit} value={severityFilter} onChange={onSeverityChange} />
+      <SummaryStrip
+        audit={audit}
+        links={links}
+        taskStateFilter={taskStateFilter}
+        onTaskStateChange={handleTaskStateChange}
+        onOpenScreenshot={onOpenScreenshot}
+      />
+      {taskStateFilter !== 'all' ? (
+        <div className="task-state-filter" data-testid="task-state-filter">
+          <span>当前查看：{taskStateLabel(audit.meta?.taskConclusion, taskStateFilter)}</span>
+          <Button type="button" variant="ghost" size="sm" onClick={() => handleTaskStateChange('all')}>
+            查看全部问题
+          </Button>
+        </div>
+      ) : null}
+      <SeverityPills audit={audit} issues={taskScopedIssues} value={severityFilter} onChange={onSeverityChange} />
       <div className="issue-list">
         {issueGroups.length ? (
           issueGroups.map((group) => (
@@ -633,7 +666,7 @@ function ExportMenu({ links }) {
   );
 }
 
-function SummaryStrip({ audit, links, onOpenScreenshot }) {
+function SummaryStrip({ audit, links, taskStateFilter, onTaskStateChange, onOpenScreenshot }) {
   const [analysisOpen, setAnalysisOpen] = React.useState(false);
   const analysisIconRef = React.useRef(null);
   const summary = audit.summary || {};
@@ -645,7 +678,7 @@ function SummaryStrip({ audit, links, onOpenScreenshot }) {
   return (
     <>
       <div className="summary-strip">
-        <button className="screenshot-preview" type="button" aria-label="查看完整页面截图" onClick={() => onOpenScreenshot({ label: '完整页面截图' })}>
+        <button className="screenshot-preview" type="button" aria-label="查看完整页面截图" onClick={() => onOpenScreenshot({ label: '完整页面截图', screenshotSrc: links?.screenshot })}>
           {links?.screenshot ? <img src={links.screenshot} alt="页面首屏截图" /> : <div className="screenshot-fallback">暂无截图</div>}
           <span>点击查看完整截图</span>
         </button>
@@ -685,26 +718,65 @@ function SummaryStrip({ audit, links, onOpenScreenshot }) {
           </div>
         </div>
       </div>
-      {taskConclusion ? <TaskConclusionCard conclusion={taskConclusion} /> : null}
+      {taskConclusion ? (
+        <TaskConclusionCard
+          conclusion={taskConclusion}
+          issues={audit.issues || []}
+          selectedTaskState={taskStateFilter}
+          onSelectTaskState={onTaskStateChange}
+        />
+      ) : null}
       {analysisOpen ? <AuditAnalysisModal analysis={analysis} ai={audit.ai} onClose={() => setAnalysisOpen(false)} /> : null}
     </>
   );
 }
 
-function TaskConclusionCard({ conclusion }) {
+function TaskConclusionCard({ conclusion, issues = [], selectedTaskState = 'all', onSelectTaskState }) {
+  const taskIssueGroups = React.useMemo(() => buildTaskStateIssueGroups(conclusion, issues), [conclusion, issues]);
   return (
     <section className={cn('task-conclusion-card', `is-${conclusion.status || 'review'}`)}>
       <div>
-        <Badge variant={conclusion.status === 'blocked' ? 'blocker' : conclusion.status === 'needs-fix' ? 'major' : 'minor'}>
-          {conclusion.label || '任务走查结论'}
-        </Badge>
+        <div className="task-conclusion-status-row">
+          <Badge variant={conclusion.status === 'blocked' ? 'blocker' : conclusion.status === 'needs-fix' ? 'major' : 'minor'}>
+            {conclusion.label || '任务走查结论'}
+          </Badge>
+          <Badge variant="default" className="task-plan-badge">
+            {stepPlanLabel({ provider: conclusion.generatedBy, confidence: conclusion.confidence, steps: conclusion.steps })}
+          </Badge>
+        </div>
         <h3>{conclusion.task || '页面任务路径'}</h3>
         <p>{conclusion.verdict}</p>
       </div>
-      <div className="task-conclusion-meta">
-        <span>{stepPlanLabel({ provider: conclusion.generatedBy, confidence: conclusion.confidence, steps: conclusion.steps })}</span>
-        {conclusion.finalUrl ? <span>{shortUrl(conclusion.finalUrl)}</span> : null}
-      </div>
+      {taskIssueGroups.length ? (
+        <div className="task-issue-groups">
+          <div className="task-issue-groups-title">
+            <div>
+              <strong>按任务状态聚合问题</strong>
+              <small>同一问题出现在多个流程状态时，会分别计数</small>
+            </div>
+          </div>
+          <div className="task-issue-group-list">
+            {taskIssueGroups.map((group) => (
+              <button
+                key={group.key}
+                className={cn('task-issue-group', selectedTaskState === group.key && 'is-active')}
+                type="button"
+                data-testid={`task-state-${group.key}`}
+                aria-pressed={selectedTaskState === group.key}
+                onClick={() => onSelectTaskState?.(selectedTaskState === group.key ? 'all' : group.key)}
+              >
+                <div>
+                  <strong>{group.label}</strong>
+                  {group.description ? <span>{group.description}</span> : null}
+                </div>
+                <p>
+                  {group.total} 个问题，阻断 {group.bySeverity.Blocker || 0}、严重 {group.bySeverity.Major || 0}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -770,13 +842,14 @@ function AuditAnalysisModal({ analysis, ai, onClose }) {
   );
 }
 
-function SeverityPills({ audit, value, onChange }) {
-  const summary = audit.summary || {};
+function SeverityPills({ audit, issues, value, onChange }) {
+  const scopedIssues = issues || audit.issues || [];
+  const scopedBySeverity = countIssuesBySeverity(scopedIssues);
   const items = [
-    { value: 'all', label: '全部', count: summary.total || 0 },
+    { value: 'all', label: '全部', count: scopedIssues.length || 0 },
     ...severityOptions
       .filter((option) => option.value !== 'all')
-      .map((option) => ({ ...option, count: summary.bySeverity?.[option.value] || 0 })),
+      .map((option) => ({ ...option, count: scopedBySeverity[option.value] || 0 })),
   ];
 
   return (
@@ -835,6 +908,73 @@ function buildAuditAnalysis(issues = [], summary = {}) {
     coreIssues,
     repairSummary,
   };
+}
+
+function buildTaskStateIssueGroups(conclusion, issues = []) {
+  if (!conclusion || !issues.length) {
+    return [];
+  }
+
+  const snapshots = Array.isArray(conclusion.flowSnapshots) ? conclusion.flowSnapshots : [];
+  const snapshotByIndex = new Map(snapshots.map((snapshot) => [Number(snapshot.index), snapshot]));
+  const groups = new Map();
+
+  function ensureGroup(key, label, description = '', order = 0) {
+    const current = groups.get(key) || {
+      key,
+      label,
+      description,
+      order,
+      issues: [],
+    };
+    if (!current.description && description) {
+      current.description = description;
+    }
+    groups.set(key, current);
+    return current;
+  }
+
+  for (const snapshot of snapshots) {
+    ensureGroup(
+      `flow-${snapshot.index}`,
+      `第 ${snapshot.index} 步后`,
+      snapshot.description || snapshot.action || '',
+      Number(snapshot.index) || 0,
+    );
+  }
+
+  for (const issue of issues) {
+    const stepIndex = Number(issue.flowStep?.index || issue.evidence?.flowStep?.index || 0);
+    const snapshot = stepIndex ? snapshotByIndex.get(stepIndex) : null;
+    const group = stepIndex
+      ? ensureGroup(`flow-${stepIndex}`, `第 ${stepIndex} 步后`, snapshot?.description || issue.flowStep?.description || '', stepIndex)
+      : ensureGroup('final', '最终页面', conclusion.finalUrl ? shortUrl(conclusion.finalUrl) : '', snapshots.length + 1);
+    group.issues.push(issue);
+  }
+
+  return Array.from(groups.values())
+    .filter((group) => group.issues.length)
+    .sort((left, right) => left.order - right.order)
+    .map((group) => {
+      return {
+        ...group,
+        total: group.issues.length,
+        bySeverity: countIssuesBySeverity(group.issues),
+      };
+    });
+}
+
+function issueTaskStateKey(issue) {
+  const stepIndex = Number(issue?.flowStep?.index || issue?.evidence?.flowStep?.index || 0);
+  return stepIndex ? `flow-${stepIndex}` : 'final';
+}
+
+function taskStateLabel(conclusion, stateKey) {
+  if (stateKey === 'final') {
+    return '最终页面';
+  }
+  const snapshot = (conclusion?.flowSnapshots || []).find((item) => `flow-${item.index}` === stateKey);
+  return snapshot ? `第 ${snapshot.index} 步后` : stateKey;
 }
 
 function buildUiFallbackSummary(issues = []) {
@@ -1240,6 +1380,7 @@ function IssueGroupCard({ group, onOpenScreenshot }) {
         <Badge variant={meta.badge}>{meta.label}</Badge>
         <Badge>{tierLabel(issue.tier)}</Badge>
         <Badge>{issue.owner}</Badge>
+        {issue.flowStep ? <Badge>{`第 ${issue.flowStep.index} 步后`}</Badge> : null}
         {isGrouped ? <Badge>{group.issues.length} 个实例</Badge> : <Badge>{issue.id}</Badge>}
       </div>
       <section className="issue-fields">
@@ -1354,12 +1495,13 @@ function IssueEvidenceDetails({ evidence }) {
 }
 
 function evidenceSummary(evidence) {
+  const flowPrefix = evidence.flowStep?.index ? `第 ${evidence.flowStep.index} 步后 · ` : '';
   if (evidence.previous && evidence.current) {
-    return `从「${evidenceText(evidence.previous)}」跳到「${evidenceText(evidence.current)}」，需要复核页面结构顺序。`;
+    return `${flowPrefix}从「${evidenceText(evidence.previous)}」跳到「${evidenceText(evidence.current)}」，需要复核页面结构顺序。`;
   }
 
   if (Array.isArray(evidence.path)) {
-    return `键盘遍历记录包含 ${evidence.path.length} 个焦点节点，实际聚焦到 ${evidence.uniqueFocusedCount || evidence.path.length} 个不同元素。`;
+    return `${flowPrefix}键盘遍历记录包含 ${evidence.path.length} 个焦点节点，实际聚焦到 ${evidence.uniqueFocusedCount || evidence.path.length} 个不同元素。`;
   }
 
   const parts = [];
@@ -1403,7 +1545,7 @@ function evidenceSummary(evidence) {
     parts.push(evidence.failureSummary);
   }
 
-  return parts.length ? parts.join(' · ') : '系统记录到该问题的运行时元素和检测上下文，可展开查看问题定位信息。';
+  return `${flowPrefix}${parts.length ? parts.join(' · ') : '系统记录到该问题的运行时元素和检测上下文，可展开查看问题定位信息。'}`;
 }
 
 function elementTypeLabel(evidence) {
@@ -1502,6 +1644,7 @@ function issueGroupKey(issue) {
     tierLabel(issue.tier),
     issue.owner,
     rule.source || issue.ruleSource || issue.ruleUrl,
+    issue.flowStep?.index ? `flow-step-${issue.flowStep.index}` : 'final-state',
   ].map(normalizeGroupText).join('|');
 }
 
@@ -1655,6 +1798,7 @@ function HistoryPage() {
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState('');
   const [severityFilter, setSeverityFilter] = React.useState('all');
+  const [taskStateFilter, setTaskStateFilter] = React.useState('all');
   const [screenshotTarget, setScreenshotTarget] = React.useState(null);
   const historyShellRef = React.useRef(null);
   const historyDetailRef = React.useRef(null);
@@ -1668,8 +1812,11 @@ function HistoryPage() {
 
   const filteredIssues = React.useMemo(() => {
     const issues = selectedAudit?.issues || [];
-    return issues.filter((issue) => severityFilter === 'all' || issue.severity === severityFilter);
-  }, [selectedAudit, severityFilter]);
+    return issues.filter((issue) => (
+      (severityFilter === 'all' || issue.severity === severityFilter)
+      && (taskStateFilter === 'all' || issueTaskStateKey(issue) === taskStateFilter)
+    ));
+  }, [selectedAudit, severityFilter, taskStateFilter]);
 
   React.useEffect(() => {
     if (!selectedReport || !historyShellRef.current || !historyDetailRef.current) {
@@ -1691,6 +1838,7 @@ function HistoryPage() {
     setSelectedAudit(null);
     setDetailError('');
     setSeverityFilter('all');
+    setTaskStateFilter('all');
     setDetailLoading(true);
 
     try {
@@ -1718,7 +1866,7 @@ function HistoryPage() {
     <main className={cn('workspace history-workspace', selectedReport && 'is-reading')}>
       <section className="page-hero history-hero backdrop-blur-xl">
         <Button asChild variant="ghost" size="icon" className="history-back-button">
-          <a href="/" aria-label="返回易达">
+          <a href="/" aria-label="返回通见">
             <ArrowLeft className="h-5 w-5" />
           </a>
         </Button>
@@ -1789,6 +1937,8 @@ function HistoryPage() {
                   links={selectedReport.links}
                   severityFilter={severityFilter}
                   onSeverityChange={setSeverityFilter}
+                  taskStateFilter={taskStateFilter}
+                  onTaskStateChange={setTaskStateFilter}
                   filteredIssues={filteredIssues}
                   onOpenScreenshot={(target) => setScreenshotTarget(target || { label: '完整页面截图' })}
                 />
@@ -1798,9 +1948,9 @@ function HistoryPage() {
         ) : null}
       </section>
 
-      {screenshotTarget && selectedReport?.links?.screenshot ? (
+      {screenshotTarget && screenshotSrcForTarget(selectedReport?.links, screenshotTarget) ? (
         <ScreenshotModal
-          src={selectedReport.links.screenshot}
+          src={screenshotSrcForTarget(selectedReport.links, screenshotTarget)}
           target={screenshotTarget}
           onClose={() => setScreenshotTarget(null)}
         />
@@ -1811,6 +1961,8 @@ function HistoryPage() {
 
 function ScreenshotModal({ src, target, onClose }) {
   const [imageSize, setImageSize] = React.useState(null);
+  const modalRef = React.useRef(null);
+  const imageRef = React.useRef(null);
   const rect = evidenceRect(target?.evidence);
   const highlightStyle = rect && imageSize
     ? {
@@ -1822,31 +1974,76 @@ function ScreenshotModal({ src, target, onClose }) {
     : null;
   const title = target?.label || '完整页面截图';
 
+  React.useEffect(() => {
+    setImageSize(null);
+  }, [src]);
+
+  React.useEffect(() => {
+    const modal = modalRef.current;
+    const image = imageRef.current;
+    if (!modal || !image || !imageSize) {
+      return;
+    }
+    if (!rect) {
+      modal.scrollTo({ top: 0, left: 0 });
+      return;
+    }
+
+    const scaleX = image.clientWidth / imageSize.width;
+    const scaleY = image.clientHeight / imageSize.height;
+    const targetX = (rect.x + rect.width / 2) * scaleX - modal.clientWidth / 2;
+    const targetY = (rect.y + rect.height / 2) * scaleY - modal.clientHeight / 2;
+    const frame = window.requestAnimationFrame(() => {
+      modal.scrollTo({
+        left: Math.max(0, targetX),
+        top: Math.max(0, targetY),
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [imageSize, rect?.x, rect?.y, rect?.width, rect?.height]);
+
   return (
     <div className="screenshot-modal" role="dialog" aria-modal="true" aria-label={title}>
       <button className="modal-backdrop" type="button" aria-label="关闭完整页面截图" onClick={onClose} />
-      <div className="modal-content">
+      <div className="screenshot-modal-shell">
         <Button className="modal-close" variant="secondary" size="icon" type="button" aria-label="关闭完整页面截图" onClick={onClose}>
           <X className="h-4 w-4" />
         </Button>
-        <div className="screenshot-stage">
-          <img
-            src={src}
-            alt={title}
-            onLoad={(event) => setImageSize({
-              width: event.currentTarget.naturalWidth,
-              height: event.currentTarget.naturalHeight,
-            })}
-          />
-          {highlightStyle ? (
-            <div className="screenshot-highlight" style={highlightStyle} aria-hidden="true">
-              {target?.issueId ? <span>{target.issueId}</span> : null}
-            </div>
-          ) : null}
+        <div className="modal-content screenshot-modal-content" ref={modalRef}>
+          <div className="screenshot-stage">
+            <img
+              ref={imageRef}
+              src={src}
+              alt={title}
+              onLoad={(event) => setImageSize({
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight,
+              })}
+            />
+            {highlightStyle ? (
+              <div className="screenshot-highlight" style={highlightStyle} aria-hidden="true">
+                {target?.issueId ? <span>{target.issueId}</span> : null}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+function screenshotSrcForTarget(links, target) {
+  if (target?.screenshotSrc) {
+    return target.screenshotSrc;
+  }
+  if (!links) {
+    return '';
+  }
+  const stepIndex = target?.evidence?.flowStep?.index || target?.flowStep?.index;
+  if (stepIndex && links.flowScreenshots?.[String(stepIndex)]) {
+    return links.flowScreenshots[String(stepIndex)];
+  }
+  return links.screenshot || '';
 }
 
 function updateStep(steps, setSteps, index, patch) {

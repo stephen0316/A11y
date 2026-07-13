@@ -96,7 +96,7 @@ async function handleAudit(request, response) {
 
   const report = result.reports[0];
   const audit = JSON.parse(await readFile(report.jsonPath, 'utf8'));
-  const reportUrls = urlsForReport(report);
+  const reportUrls = urlsForReport(report, audit);
 
   sendJson(response, 200, {
     ok: true,
@@ -210,7 +210,7 @@ function normalizeSteps(steps) {
     throw new Error('steps must be an array.');
   }
 
-  const allowedActions = new Set(['fill', 'click', 'press', 'waitForSelector', 'wait']);
+  const allowedActions = new Set(['fill', 'hover', 'click', 'press', 'waitForSelector', 'wait']);
   return steps.map((step, index) => {
     if (!step || typeof step !== 'object') {
       throw new Error(`steps[${index}] must be an object.`);
@@ -272,13 +272,7 @@ async function listReports() {
         url: audit.meta?.target?.url || '',
         generatedAt: audit.meta?.generatedAt || stats.mtime.toISOString(),
         summary: audit.summary || {},
-        links: {
-          report: `/reports/${encodePath(entry.name)}/report.md`,
-          audit: `/reports/${encodePath(entry.name)}/audit.json`,
-          screenshot: `/reports/${encodePath(entry.name)}/screenshot.png`,
-          domSnapshot: `/reports/${encodePath(entry.name)}/dom-snapshot.html`,
-          accessibilityTree: `/reports/${encodePath(entry.name)}/accessibility-tree.json`,
-        },
+        links: linksForRun(entry.name, audit),
       });
     } catch {
       // Ignore incomplete report directories.
@@ -288,22 +282,39 @@ async function listReports() {
   return reports.sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)));
 }
 
-function urlsForReport(report) {
+function urlsForReport(report, audit = null) {
   const runId = path.basename(path.dirname(report.reportPath));
   return {
     id: runId,
-    links: {
-      report: `/reports/${encodePath(runId)}/report.md`,
-      audit: `/reports/${encodePath(runId)}/audit.json`,
-      screenshot: `/reports/${encodePath(runId)}/screenshot.png`,
-      domSnapshot: `/reports/${encodePath(runId)}/dom-snapshot.html`,
-      accessibilityTree: `/reports/${encodePath(runId)}/accessibility-tree.json`,
-    },
+    links: linksForRun(runId, audit),
   };
 }
 
 function encodePath(value) {
   return String(value).split('/').map(encodeURIComponent).join('/');
+}
+
+function linksForRun(runId, audit = null) {
+  const encodedRunId = encodePath(runId);
+  const links = {
+    report: `/reports/${encodedRunId}/report.md`,
+    audit: `/reports/${encodedRunId}/audit.json`,
+    screenshot: `/reports/${encodedRunId}/screenshot.png`,
+    domSnapshot: `/reports/${encodedRunId}/dom-snapshot.html`,
+    accessibilityTree: `/reports/${encodedRunId}/accessibility-tree.json`,
+  };
+  const flowScreenshots = audit?.meta?.artifacts?.flowScreenshots;
+  if (Array.isArray(flowScreenshots) && flowScreenshots.length) {
+    links.flowScreenshots = Object.fromEntries(
+      flowScreenshots
+        .filter((item) => item?.index && item?.screenshot)
+        .map((item) => [
+          String(item.index),
+          `/reports/${encodedRunId}/${encodePath(item.screenshot)}`,
+        ]),
+    );
+  }
+  return links;
 }
 
 async function serveFile(response, root, requestedPath) {

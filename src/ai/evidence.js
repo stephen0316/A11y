@@ -15,7 +15,7 @@ const LIMITS = {
   accessibilityNodes: 24,
 };
 
-export function buildEvidencePack({ target, axe, domSignals, keyboard, accessibilityTree, issues }) {
+export function buildEvidencePack({ target, axe, domSignals, keyboard, accessibilityTree, issues, flowSnapshots }) {
   return {
     target: {
       name: target?.name || '',
@@ -23,6 +23,7 @@ export function buildEvidencePack({ target, axe, domSignals, keyboard, accessibi
       notes: target?.notes || '',
       steps: compactSteps(target?.steps || []),
     },
+    flow: summarizeFlowSnapshots(flowSnapshots || []),
     page: {
       title: domSignals?.title || '',
       lang: domSignals?.lang || '',
@@ -34,6 +35,24 @@ export function buildEvidencePack({ target, axe, domSignals, keyboard, accessibi
     issueStats: summarizeIssueStats(issues || []),
     issues: summarizeIssues(prioritizeIssues(issues || [])),
   };
+}
+
+function summarizeFlowSnapshots(snapshots) {
+  return snapshots.slice(0, 12).map((snapshot) => ({
+    index: snapshot.index,
+    action: snapshot.action,
+    description: truncate(snapshot.description || '', 120),
+    url: snapshot.url || '',
+    issueCount: snapshot.summary?.total || 0,
+    bySeverity: snapshot.summary?.bySeverity || {},
+    topIssues: take(snapshot.issues, 5).map((issue) => ({
+      id: issue.id,
+      title: issue.title,
+      severity: issue.severity,
+      tier: issue.tier,
+      selector: issue.evidence?.selector || issue.evidence?.target || '',
+    })),
+  }));
 }
 
 function compactSteps(steps) {

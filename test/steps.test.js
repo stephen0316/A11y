@@ -34,6 +34,16 @@ test('buildLocalStepPlan parses inline field value pairs', () => {
   assert.equal(plan.steps[1].value, 'test123');
 });
 
+test('buildLocalStepPlan supports hover before clicking submenu items', () => {
+  const plan = buildLocalStepPlan('鼠标 hover 在顶部导航栏“栏目”菜单，点击栏目下的“我的栏目”，跳转至目标页面');
+
+  assert.equal(plan.steps.length, 2);
+  assert.equal(plan.steps[0].action, 'hover');
+  assert.equal(plan.steps[0].name, '栏目');
+  assert.equal(plan.steps[1].action, 'click');
+  assert.equal(plan.steps[1].name, '我的栏目');
+});
+
 test('generateScenarioSteps uses Gemini output when enabled', async () => {
   let generationConfig = null;
   const result = await generateScenarioSteps({
@@ -52,7 +62,7 @@ test('generateScenarioSteps uses Gemini output when enabled', async () => {
             confidence: 'high',
             assumptions: ['使用按钮文本定位'],
             steps: [
-              { action: 'click', role: 'button', name: '新增', selectors: ['button:has-text("新增")'], description: '点击新增' },
+              { action: 'hover', role: 'button', name: '新增', selectors: ['button:has-text("新增")'], description: '悬停新增' },
               { action: 'waitForSelector', selectors: ['[role="dialog"]'], description: '等待弹窗' },
             ],
           }),
@@ -64,6 +74,7 @@ test('generateScenarioSteps uses Gemini output when enabled', async () => {
   assert.deepEqual(generationConfig, { temperature: 0.1 });
   assert.equal(result.provider, 'gemini');
   assert.equal(result.confidence, 'high');
+  assert.equal(result.steps[0].action, 'hover');
   assert.equal(result.steps[0].name, '新增');
   assert.equal(result.steps[1].selector, '[role="dialog"]');
 });

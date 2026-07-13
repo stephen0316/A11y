@@ -6,7 +6,7 @@ export function renderMarkdownReport(audit) {
   const enhancementByIssue = new Map((ai?.issueEnhancements || []).map((item) => [item.issueId, item]));
   const lines = [];
 
-  lines.push(`# ${meta.target.name} 易达走查报告`);
+  lines.push(`# ${meta.target.name} 通见走查报告`);
   lines.push('');
   lines.push(`- URL: ${meta.target.url}`);
   lines.push(`- 基线: ${meta.baseline}`);
@@ -15,6 +15,11 @@ export function renderMarkdownReport(audit) {
     lines.push(`- 环境/账号说明: ${meta.target.notes}`);
   }
   lines.push(`- 截图: ${meta.artifacts.screenshot}`);
+  if (meta.artifacts.flowScreenshots?.length) {
+    for (const item of meta.artifacts.flowScreenshots) {
+      lines.push(`- 第 ${item.index} 步后截图: ${item.screenshot}`);
+    }
+  }
   lines.push(`- DOM 快照: ${meta.artifacts.domSnapshot}`);
   lines.push(`- Accessibility Tree: ${meta.artifacts.accessibilityTree}`);
   lines.push('');
@@ -139,7 +144,28 @@ function renderTaskConclusion(conclusion) {
   if (conclusion.steps?.length) {
     lines.push('- 已执行步骤:');
     for (const step of conclusion.steps) {
-      lines.push(`  - ${step.description || step.action}${step.selector ? ` (${step.selector})` : ''}`);
+      const sample = step.auditSample;
+      const suffix = sample?.stateChanged === false
+        ? sample.reusedFromStep
+          ? `，未产生新的页面或无障碍语义状态，复用第 ${sample.reusedFromStep} 步结果`
+          : '，未产生新的页面或无障碍语义状态，未新增问题统计'
+        : sample ? `，步骤状态发现 ${sample.issueCount || 0} 个问题` : '';
+      lines.push(`  - ${step.description || step.action}${step.selector ? ` (${step.selector})` : ''}${suffix}`);
+    }
+  }
+
+  if (conclusion.finalStateMergedIntoStep) {
+    const finalStateMessage = conclusion.finalStateMergeReason === 'completed-navigation'
+      ? `第 ${conclusion.finalStateMergedIntoStep} 步已进入最终页面，完整检测结果已合并到该步骤。`
+      : `与第 ${conclusion.finalStateMergedIntoStep} 步后相同，已合并为同一走查状态。`;
+    lines.push(`- 最终页面状态: ${finalStateMessage}`);
+  }
+
+  if (conclusion.flowSnapshots?.length) {
+    lines.push('- 流程状态采样:');
+    for (const snapshot of conclusion.flowSnapshots) {
+      const screenshot = snapshot.screenshot ? `，截图 ${snapshot.screenshot}` : '';
+      lines.push(`  - 第 ${snapshot.index} 步后：${snapshot.summary?.total || 0} 个问题（阻断 ${snapshot.summary?.bySeverity?.Blocker || 0}、严重 ${snapshot.summary?.bySeverity?.Major || 0}、一般 ${snapshot.summary?.bySeverity?.Minor || 0}、建议 ${snapshot.summary?.bySeverity?.Suggestion || 0}）${screenshot}`);
     }
   }
 
