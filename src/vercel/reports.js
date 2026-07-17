@@ -31,8 +31,13 @@ export async function runAndStoreVercelAudit(target, payload = {}) {
     links.report = await uploadText(runId, 'report.md', renderMarkdownReport(artifactAudit), 'text/markdown; charset=utf-8');
     const audit = withRemoteArtifacts(localAudit, links);
 
-    await uploadText(runId, 'audit.json', JSON.stringify(audit, null, 2), 'application/json; charset=utf-8');
-    await uploadText(runId, 'report.md', renderMarkdownReport(audit), 'text/markdown; charset=utf-8');
+    await uploadText(
+      runId,
+      'audit.json',
+      JSON.stringify(audit, null, 2),
+      'application/json; charset=utf-8',
+      { allowOverwrite: true },
+    );
 
     return {
       id: runId,
@@ -102,14 +107,15 @@ async function uploadFile(runId, runDirectory, filename, contentType) {
   return upload(runId, filename, contents, contentType);
 }
 
-async function uploadText(runId, filename, contents, contentType) {
-  return upload(runId, filename, contents, contentType);
+async function uploadText(runId, filename, contents, contentType, options) {
+  return upload(runId, filename, contents, contentType, options);
 }
 
-async function upload(runId, filename, body, contentType) {
+async function upload(runId, filename, body, contentType, { allowOverwrite = false } = {}) {
   const blob = await put(`${BLOB_PREFIX}${runId}/${filename}`, body, {
     access: 'public',
     addRandomSuffix: false,
+    allowOverwrite,
     contentType,
   });
   return blob.url;
