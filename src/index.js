@@ -6,7 +6,9 @@ export async function auditTargets(targets, options = {}) {
     throw new Error('No audit target configured. Pass --url or --scenario.');
   }
 
-  const browser = await chromium.launch({ headless: !options.headful });
+  const browser = await (options.launchBrowser || launchLocalBrowser)({
+    headless: !options.headful,
+  });
   const reports = [];
 
   try {
@@ -27,4 +29,8 @@ export async function auditTargets(targets, options = {}) {
   }
 
   return { reports };
+}
+
+async function launchLocalBrowser(launchOptions) {
+  return chromium.launch(launchOptions);
 }

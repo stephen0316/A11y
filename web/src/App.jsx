@@ -2279,7 +2279,7 @@ async function readJsonResponse(response) {
     if (looksLikeHtml || looksLikeVercelNotFound) {
       const deploymentHint = API_BASE_URL
         ? `请检查 VITE_API_BASE_URL 指向的走查服务是否可用。`
-        : '请部署包含 Node 和 Playwright 的后端服务，并在前端设置 VITE_API_BASE_URL。';
+        : '当前 Vercel 部署未包含 /api/audit Function。请确认已部署最新代码，并在 Vercel Storage 中连接 Blob Store。';
       throw new Error(`当前站点只部署了前端静态页面，走查 API 未运行（HTTP ${status}）。${deploymentHint}`);
     }
     const detail = responsePreview ? `，响应：${responsePreview}` : '';
