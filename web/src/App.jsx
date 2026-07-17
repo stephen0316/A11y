@@ -2275,7 +2275,8 @@ async function readJsonResponse(response) {
     const status = `${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
     const responsePreview = raw.replace(/\s+/g, ' ').trim().slice(0, 160);
     const looksLikeHtml = contentType.includes('text/html') || /^\s*<!doctype html|^\s*<html[\s>]/i.test(raw);
-    if (looksLikeHtml) {
+    const looksLikeVercelNotFound = response.status === 404 && /\bNOT_FOUND\b|The page could not be found/i.test(raw);
+    if (looksLikeHtml || looksLikeVercelNotFound) {
       const deploymentHint = API_BASE_URL
         ? `请检查 VITE_API_BASE_URL 指向的走查服务是否可用。`
         : '请部署包含 Node 和 Playwright 的后端服务，并在前端设置 VITE_API_BASE_URL。';
