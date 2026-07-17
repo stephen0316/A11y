@@ -11,6 +11,7 @@ const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const REPORTS_DIR = path.join(ROOT_DIR, 'reports');
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 
 const CONTENT_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -78,8 +79,9 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`A11y audit app: http://127.0.0.1:${PORT}`);
+server.listen(PORT, HOST, () => {
+  const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
+  console.log(`A11y audit app: http://${displayHost}:${PORT}`);
 });
 
 async function handleAudit(request, response) {

@@ -91,6 +91,40 @@ npm run audit -- --scenario ./a11y.scenario.example.json
 
 通见支持自然语言生成步骤：填写 `任务路径` 后点击 `生成步骤` 可预览和微调；也可以直接点击 `开始走查`，后端会自动解析并执行。没有配置 Gemini 时会使用本地规则解析常见登录、表单、弹窗、toast、按键和等待路径；配置 Gemini 后会优先用 AI 生成候选步骤，并保留本地规则兜底。
 
+## 线上部署
+
+通见不能只部署 `dist/` 静态文件。页面走查依赖 Node 服务启动 Playwright / Chromium，并提供 `/api/audit`、`/api/steps`、`/api/reports` 和 `/reports/*`。如果将前端发布到纯静态托管，`/api/audit` 通常会被回退为 `index.html`，页面就会提示“后端服务返回了非 JSON 内容”。
+
+推荐用仓库内的 Dockerfile 部署前后端一体服务：
+
+```bash
+docker build -t tongjian .
+docker run --rm --init \
+  -p 3000:3000 \
+  -e GEMINI_API_KEY="你的 Gemini API Key" \
+  -v tongjian-reports:/app/reports \
+  tongjian
+```
+
+部署平台需要满足：
+
+- 支持长时间运行的 Node 容器和 Chromium 依赖，不能使用纯静态托管或仅 Serverless Function 的运行时。
+- 将平台提供的 `PORT` 注入容器；服务已默认监听 `0.0.0.0`。
+- 同一个域名下把 `/`、`/api/*` 和 `/reports/*` 都转发给该容器，不要把 `/api/*` 重写到 `index.html`。
+- 为 `/app/reports` 挂载持久化卷，否则容器重启后历史报告会丢失。
+- 允许容器访问被走查网站和 Gemini API（如启用 AI）。
+
+也可以不用 Docker，在具备 Chromium 系统依赖的 Linux 主机执行：
+
+```bash
+npm ci
+npx playwright install --with-deps chromium
+npm run build
+PORT=3000 HOST=0.0.0.0 npm run start
+```
+
+安全提示：线上实例会代表服务端访问用户提交的 URL。公开部署前应在反向代理或应用层加认证、访问频率限制，并限制可走查的域名范围，避免成为开放的内网访问入口。
+
 自然语言生成步骤接口：
 
 ```bash

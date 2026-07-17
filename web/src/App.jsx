@@ -2234,12 +2234,17 @@ function meaningfulSemanticFindings(findings) {
 async function readJsonResponse(response) {
   const raw = await response.text();
   if (!raw.trim()) {
-    throw new Error('后端服务未返回数据，请确认 3000 端口的走查服务已启动。');
+    throw new Error('走查服务未返回数据，请确认线上 Node 服务已启动且 /api 路径可访问。');
   }
   try {
     return JSON.parse(raw);
   } catch {
-    throw new Error('后端服务返回了非 JSON 内容，请检查本地走查服务状态。');
+    const contentType = response.headers.get('content-type') || '';
+    const looksLikeHtml = contentType.includes('text/html') || /^\s*<!doctype html|^\s*<html[\s>]/i.test(raw);
+    if (looksLikeHtml) {
+      throw new Error('当前站点只部署了前端静态页面，走查 API 未运行。请部署包含 Node 和 Playwright 的后端服务，并将 /api/* 与 /reports/* 转发到该服务。');
+    }
+    throw new Error(`走查服务返回了非 JSON 内容（${contentType || '未知类型'}），请检查 /api 路由配置。`);
   }
 }
 
