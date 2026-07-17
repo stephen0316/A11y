@@ -100,7 +100,7 @@ npm run audit -- --scenario ./a11y.scenario.example.json
 部署步骤：
 
 1. 将本仓库导入 Vercel 并部署。`vercel.json` 会构建 `dist/`，输出首页与 `history.html`，并配置走查函数的最长执行时间。
-2. 在 Vercel Dashboard 的 Storage 创建 Blob Store，点击 Connect Project。Vercel 会自动注入 `BLOB_READ_WRITE_TOKEN`。
+2. 在 Vercel Dashboard 的 Storage 创建 **Public** Blob Store，点击 Connect Project。Vercel 会自动注入 `BLOB_STORE_ID` 和 OIDC 凭据。
 3. 如需 AI，在 Project Settings -> Environment Variables 中添加 `GEMINI_API_KEY`，然后重新部署。
 4. 不要设置 `VITE_API_BASE_URL`。单 Vercel 模式下前端直接调用同域 `/api/*` Functions。
 5. 在 Project Settings -> Domains 将 `a11y.woooooo.cn` 绑定到生产部署，并按 Vercel 页面提供的 DNS 记录配置域名。

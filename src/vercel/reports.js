@@ -76,8 +76,8 @@ export async function listStoredVercelReports() {
 }
 
 function ensureBlobConfigured() {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    throw new Error('未配置 Vercel Blob。请在 Vercel Storage 创建 Blob Store，并将 BLOB_READ_WRITE_TOKEN 连接到此项目。');
+  if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_STORE_ID) {
+    throw new Error('未配置 Vercel Blob。请在 Vercel Storage 创建并连接 Blob Store，使项目获得 BLOB_STORE_ID 或 BLOB_READ_WRITE_TOKEN。');
   }
 }
 
