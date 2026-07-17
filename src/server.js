@@ -12,6 +12,12 @@ const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const REPORTS_DIR = path.join(ROOT_DIR, 'reports');
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
+const ALLOWED_ORIGINS = new Set(
+  String(process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
 
 const CONTENT_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -32,6 +38,13 @@ const CONTENT_TYPES = {
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
+    setCorsHeaders(request, response);
+
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
 
     if (request.method === 'GET' && url.pathname === '/api/health') {
       sendJson(response, 200, { ok: true });
@@ -81,8 +94,19 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, HOST, () => {
   const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
-  console.log(`A11y audit app: http://${displayHost}:${PORT}`);
+  console.log(`无障碍走查服务: http://${displayHost}:${PORT}`);
 });
+
+function setCorsHeaders(request, response) {
+  const origin = request.headers.origin;
+  if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+    return;
+  }
+  response.setHeader('access-control-allow-origin', origin);
+  response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  response.setHeader('access-control-allow-headers', 'content-type');
+  response.setHeader('vary', 'Origin');
+}
 
 async function handleAudit(request, response) {
   const payload = await readJsonBody(request);

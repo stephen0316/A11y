@@ -6,7 +6,7 @@ export function renderMarkdownReport(audit) {
   const enhancementByIssue = new Map((ai?.issueEnhancements || []).map((item) => [item.issueId, item]));
   const lines = [];
 
-  lines.push(`# ${meta.target.name} 通见走查报告`);
+  lines.push(`# ${meta.target.name} 无障碍走查报告`);
   lines.push('');
   lines.push(`- URL: ${meta.target.url}`);
   lines.push(`- 基线: ${meta.baseline}`);

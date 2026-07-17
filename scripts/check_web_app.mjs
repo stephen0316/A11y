@@ -46,7 +46,7 @@ try {
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: 'networkidle' });
-  await assertVisibleText(page, '通见');
+  await assertVisibleText(page, '无障碍走查');
   await assertVisibleText(page, '历史报告');
 
   await page.getByLabel('URL').fill(`file://${path.resolve('examples/sample-target.html')}`);

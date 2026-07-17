@@ -48,6 +48,7 @@ import { cn } from './lib/utils.js';
 
 const LAST_AUDIT_KEY = 'a11y:lastAuditReport';
 const AUDIT_DRAFT_KEY = 'a11y:auditDraft';
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
 const DEFAULT_AUDIT_FORM = {
   url: '',
   name: '',
@@ -56,6 +57,36 @@ const DEFAULT_AUDIT_FORM = {
   viewport: '1440x1000',
   maxTabs: '30',
 };
+
+function apiUrl(value) {
+  if (!value || /^https?:\/\//i.test(value)) {
+    return value;
+  }
+  const pathname = value.startsWith('/') ? value : `/${value}`;
+  return API_BASE_URL ? `${API_BASE_URL}${pathname}` : pathname;
+}
+
+function resolveReportLinks(links) {
+  if (!links || typeof links !== 'object') {
+    return links || null;
+  }
+  const resolved = { ...links };
+  for (const key of ['report', 'audit', 'screenshot', 'domSnapshot', 'accessibilityTree']) {
+    if (resolved[key]) {
+      resolved[key] = apiUrl(resolved[key]);
+    }
+  }
+  if (resolved.flowScreenshots && typeof resolved.flowScreenshots === 'object') {
+    resolved.flowScreenshots = Object.fromEntries(
+      Object.entries(resolved.flowScreenshots).map(([key, value]) => [key, apiUrl(value)]),
+    );
+  }
+  return resolved;
+}
+
+function resolveReport(report) {
+  return report ? { ...report, links: resolveReportLinks(report.links) } : report;
+}
 
 const viewportOptions = [
   { value: '1440x1000', label: '桌面 1440×1000' },
@@ -222,7 +253,7 @@ function AuditPage() {
     try {
       const report = JSON.parse(saved);
       setAudit(report.audit || null);
-      setLinks(report.links || null);
+      setLinks(resolveReportLinks(report.links));
       setStepPlan(report.audit?.meta?.target?.stepPlan || null);
     } catch {
       localStorage.removeItem(LAST_AUDIT_KEY);
@@ -244,7 +275,7 @@ function AuditPage() {
     setScreenshotTarget(null);
 
     try {
-      const response = await fetch('/api/audit', {
+      const response = await fetch(apiUrl('/api/audit'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -265,10 +296,11 @@ function AuditPage() {
       if (!response.ok || !data.ok) {
         throw new Error(data.error || '走查失败');
       }
-      setAudit(data.report.audit);
-      setLinks(data.report.links);
-      setStepPlan(data.report.audit?.meta?.target?.stepPlan || null);
-      localStorage.setItem(LAST_AUDIT_KEY, JSON.stringify(data.report));
+      const report = resolveReport(data.report);
+      setAudit(report.audit);
+      setLinks(report.links);
+      setStepPlan(report.audit?.meta?.target?.stepPlan || null);
+      localStorage.setItem(LAST_AUDIT_KEY, JSON.stringify(report));
     } catch (runError) {
       setError(runError.message || '走查失败');
     } finally {
@@ -294,7 +326,7 @@ function AuditPage() {
     setError('');
     setGeneratingSteps(true);
     try {
-      const response = await fetch('/api/steps', {
+      const response = await fetch(apiUrl('/api/steps'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -330,7 +362,7 @@ function AuditPage() {
     <main className="workspace home-workspace">
       <section className="page-hero">
         <div>
-          <h1>通见</h1>
+          <h1>无障碍走查</h1>
           <p>基于 WCAG 标准、页面证据链和多模态 AI 推理的无障碍体验走查助手</p>
         </div>
         <div className="hero-actions">
@@ -1804,9 +1836,9 @@ function HistoryPage() {
   const historyDetailRef = React.useRef(null);
 
   React.useEffect(() => {
-    fetch('/api/reports')
+    fetch(apiUrl('/api/reports'))
       .then((response) => readJsonResponse(response))
-      .then((data) => setReports(data.reports || []))
+      .then((data) => setReports((data.reports || []).map(resolveReport)))
       .finally(() => setLoading(false));
   }, []);
 
@@ -1842,7 +1874,7 @@ function HistoryPage() {
     setDetailLoading(true);
 
     try {
-      const response = await fetch(report.links?.audit);
+      const response = await fetch(apiUrl(report.links?.audit));
       const audit = await readJsonResponse(response);
       if (!response.ok) {
         throw new Error(audit.error || '历史报告读取失败');
@@ -1866,7 +1898,7 @@ function HistoryPage() {
     <main className={cn('workspace history-workspace', selectedReport && 'is-reading')}>
       <section className="page-hero history-hero backdrop-blur-xl">
         <Button asChild variant="ghost" size="icon" className="history-back-button">
-          <a href="/" aria-label="返回通见">
+          <a href="/" aria-label="返回无障碍走查">
             <ArrowLeft className="h-5 w-5" />
           </a>
         </Button>
@@ -2240,11 +2272,17 @@ async function readJsonResponse(response) {
     return JSON.parse(raw);
   } catch {
     const contentType = response.headers.get('content-type') || '';
+    const status = `${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
+    const responsePreview = raw.replace(/\s+/g, ' ').trim().slice(0, 160);
     const looksLikeHtml = contentType.includes('text/html') || /^\s*<!doctype html|^\s*<html[\s>]/i.test(raw);
     if (looksLikeHtml) {
-      throw new Error('当前站点只部署了前端静态页面，走查 API 未运行。请部署包含 Node 和 Playwright 的后端服务，并将 /api/* 与 /reports/* 转发到该服务。');
+      const deploymentHint = API_BASE_URL
+        ? `请检查 VITE_API_BASE_URL 指向的走查服务是否可用。`
+        : '请部署包含 Node 和 Playwright 的后端服务，并在前端设置 VITE_API_BASE_URL。';
+      throw new Error(`当前站点只部署了前端静态页面，走查 API 未运行（HTTP ${status}）。${deploymentHint}`);
     }
-    throw new Error(`走查服务返回了非 JSON 内容（${contentType || '未知类型'}），请检查 /api 路由配置。`);
+    const detail = responsePreview ? `，响应：${responsePreview}` : '';
+    throw new Error(`走查服务返回了非 JSON 内容（${contentType || '未知类型'}，HTTP ${status}${detail}）。请检查 /api 路由配置。`);
   }
 }
 

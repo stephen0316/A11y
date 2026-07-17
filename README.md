@@ -1,6 +1,6 @@
-# 无障碍 AI 体验评测工具 MVP
+# 无障碍走查
 
-通见是一个面向 UED + QA 的无障碍走查 MVP。它以可访问 URL 为输入，使用 Playwright 打开真实页面，结合 axe-core、DOM 信号、键盘行为、组件规则和 Gemini AI 生成可复核、可分派、可修复的问题报告。
+无障碍走查是一个面向 UED + QA 的无障碍走查工具。它以可访问 URL 为输入，使用 Playwright 打开真实页面，结合 axe-core、DOM 信号、键盘行为、组件规则和 Gemini AI 生成可复核、可分派、可修复的问题报告。
 
 ## 能力边界
 
@@ -89,28 +89,41 @@ npm run audit -- --url https://example.com --name "示例页面" --ai
 npm run audit -- --scenario ./a11y.scenario.example.json
 ```
 
-通见支持自然语言生成步骤：填写 `任务路径` 后点击 `生成步骤` 可预览和微调；也可以直接点击 `开始走查`，后端会自动解析并执行。没有配置 Gemini 时会使用本地规则解析常见登录、表单、弹窗、toast、按键和等待路径；配置 Gemini 后会优先用 AI 生成候选步骤，并保留本地规则兜底。
+无障碍走查支持自然语言生成步骤：填写 `任务路径` 后点击 `生成步骤` 可预览和微调；也可以直接点击 `开始走查`，后端会自动解析并执行。没有配置 Gemini 时会使用本地规则解析常见登录、表单、弹窗、toast、按键和等待路径；配置 Gemini 后会优先用 AI 生成候选步骤，并保留本地规则兜底。
 
 ## 线上部署
 
-通见不能只部署 `dist/` 静态文件。页面走查依赖 Node 服务启动 Playwright / Chromium，并提供 `/api/audit`、`/api/steps`、`/api/reports` 和 `/reports/*`。如果将前端发布到纯静态托管，`/api/audit` 通常会被回退为 `index.html`，页面就会提示“后端服务返回了非 JSON 内容”。
+无障碍走查不能只部署 `dist/` 静态文件。页面走查依赖 Node 服务启动 Playwright / Chromium，并提供 `/api/audit`、`/api/steps`、`/api/reports` 和 `/reports/*`。
 
-推荐用仓库内的 Dockerfile 部署前后端一体服务：
+### Vercel 前端 + 独立走查服务
+
+Vercel 适合部署前端，但当前走查服务是需要 Playwright / Chromium 和报告持久化目录的 Node 服务，不能直接作为本仓库的 `src/server.js` 在 Vercel 标准函数中运行。部署时拆分为两个服务：
+
+1. 将本仓库部署到 Vercel。`vercel.json` 会构建 `dist/`，并输出首页与 `history.html`。
+2. 将本仓库的 Docker 镜像部署到支持 Node 容器、Chromium 与持久化存储的平台，例如 Railway、Render、Cloud Run 或 Fly.io。
+3. 在 Vercel Project Settings -> Environment Variables 设置 `VITE_API_BASE_URL=https://<走查服务域名>`，然后重新部署前端。
+4. 在走查服务设置 `ALLOWED_ORIGINS=https://a11y.woooooo.cn`；有预览域名时以英文逗号追加到同一个变量。
+5. 在 Vercel Project Settings -> Domains 将 `a11y.woooooo.cn` 添加并绑定到生产部署；DNS 使用 Vercel 页面给出的精确 CNAME 记录。域名根路径出现 `404: NOT_FOUND` 时，应先完成这一步，再检查应用构建日志。
+
+`.env.example` 列出了前端构建变量与后端运行变量。不要将真实 API 密钥写入该文件或提交到仓库。
+
+推荐用仓库内的 Dockerfile 部署走查服务：
 
 ```bash
-docker build -t tongjian .
+docker build -t a11y-audit .
 docker run --rm --init \
   -p 3000:3000 \
   -e GEMINI_API_KEY="你的 Gemini API Key" \
-  -v tongjian-reports:/app/reports \
-  tongjian
+  -e ALLOWED_ORIGINS="https://a11y.woooooo.cn" \
+  -v a11y-audit-reports:/app/reports \
+  a11y-audit
 ```
 
 部署平台需要满足：
 
 - 支持长时间运行的 Node 容器和 Chromium 依赖，不能使用纯静态托管或仅 Serverless Function 的运行时。
 - 将平台提供的 `PORT` 注入容器；服务已默认监听 `0.0.0.0`。
-- 同一个域名下把 `/`、`/api/*` 和 `/reports/*` 都转发给该容器，不要把 `/api/*` 重写到 `index.html`。
+- 使用独立前端时，由 `VITE_API_BASE_URL` 直接请求该容器；同域部署时再将 `/api/*` 和 `/reports/*` 转发给容器，不能将它们重写到 `index.html`。
 - 为 `/app/reports` 挂载持久化卷，否则容器重启后历史报告会丢失。
 - 允许容器访问被走查网站和 Gemini API（如启用 AI）。
 
