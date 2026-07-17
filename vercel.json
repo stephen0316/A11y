@@ -6,9 +6,7 @@
   "functions": {
     "api/audit.js": {
       "maxDuration": 300,
-      "includeFiles": [
-        "node_modules/@sparticuz/chromium/bin/**"
-      ]
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**"
     },
     "api/steps.js": {
       "maxDuration": 60
