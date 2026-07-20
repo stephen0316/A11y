@@ -45,12 +45,24 @@ export async function clearLocalReports() {
   }
 }
 
-export function createLocalDownloadLinks(report, { includePreview = false } = {}) {
+export function createLocalDownloadLinks(report) {
+  const artifacts = report.artifacts || {};
+  const flowScreenshots = Object.fromEntries(
+    (artifacts.flowScreenshots || [])
+      .filter((item) => item?.dataUrl)
+      .map((item) => [String(item.index), item.dataUrl]),
+  );
   const links = {
     report: createObjectUrl(report.markdown || '', 'text/markdown;charset=utf-8'),
     audit: createObjectUrl(JSON.stringify(report.audit || {}, null, 2), 'application/json;charset=utf-8'),
-    screenshot: includePreview ? report.preview?.screenshotDataUrl || '' : '',
-    flowScreenshots: {},
+    screenshot: artifacts.screenshot?.dataUrl || report.preview?.screenshotDataUrl || '',
+    flowScreenshots,
+    domSnapshot: artifacts.domSnapshot?.content
+      ? createObjectUrl(artifacts.domSnapshot.content, 'text/html;charset=utf-8')
+      : '',
+    accessibilityTree: artifacts.accessibilityTree?.content
+      ? createObjectUrl(artifacts.accessibilityTree.content, 'application/json;charset=utf-8')
+      : '',
   };
   return links;
 }
@@ -65,6 +77,30 @@ function toStoredReport(report) {
     summary: audit.summary || {},
     audit,
     markdown: String(report?.markdown || ''),
+    artifacts: normalizeArtifacts(report?.artifacts),
+  };
+}
+
+function normalizeArtifacts(artifacts = {}) {
+  return {
+    screenshot: artifacts.screenshot?.dataUrl
+      ? { name: String(artifacts.screenshot.name || 'screenshot.png'), dataUrl: artifacts.screenshot.dataUrl }
+      : null,
+    flowScreenshots: Array.isArray(artifacts.flowScreenshots)
+      ? artifacts.flowScreenshots
+        .filter((item) => item?.dataUrl)
+        .map((item) => ({
+          index: Number(item.index),
+          name: String(item.name || `flow-step-${item.index}.png`),
+          dataUrl: item.dataUrl,
+        }))
+      : [],
+    domSnapshot: artifacts.domSnapshot?.content
+      ? { name: String(artifacts.domSnapshot.name || 'dom-snapshot.html'), content: artifacts.domSnapshot.content }
+      : null,
+    accessibilityTree: artifacts.accessibilityTree?.content
+      ? { name: String(artifacts.accessibilityTree.name || 'accessibility-tree.json'), content: artifacts.accessibilityTree.content }
+      : null,
   };
 }
 

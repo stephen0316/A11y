@@ -279,7 +279,7 @@ function AuditPage() {
       }
       const report = data.report;
       setAudit(report.audit);
-      setLinks(createLocalDownloadLinks(report, { includePreview: true }));
+      setLinks(createLocalDownloadLinks(report));
       setStepPlan(report.audit?.meta?.target?.stepPlan || null);
       await saveLocalReport(report);
     } catch (runError) {
@@ -655,6 +655,8 @@ function ExportMenu({ links }) {
     { label: 'Markdown', href: links.report },
     { label: 'JSON', href: links.audit },
     { label: '截图', href: links.screenshot },
+    { label: 'DOM 快照', href: links.domSnapshot },
+    { label: '无障碍树', href: links.accessibilityTree },
   ].filter((item) => item.href);
 
   return (
@@ -698,7 +700,7 @@ function SummaryStrip({ audit, links, taskStateFilter, onTaskStateChange, onOpen
           onClick={() => onOpenScreenshot({ label: '完整页面截图', screenshotSrc: links?.screenshot })}
         >
           {links?.screenshot ? <img src={links.screenshot} alt="页面首屏截图" /> : <div className="screenshot-fallback">暂无截图</div>}
-          <span>{links?.screenshot ? '点击查看完整截图' : '截图仅保留在本次走查中'}</span>
+          <span>{links?.screenshot ? '点击查看完整截图' : '此报告未保存截图'}</span>
         </button>
         <div className="summary-brief">
           <div className="summary-metric-row">
@@ -2005,9 +2007,9 @@ function HistoryPage() {
         ) : null}
       </section>
 
-      {screenshotTarget && screenshotSrcForTarget(null, screenshotTarget) ? (
+      {screenshotTarget && screenshotSrcForTarget(selectedLinks, screenshotTarget) ? (
         <ScreenshotModal
-          src={screenshotSrcForTarget(null, screenshotTarget)}
+          src={screenshotSrcForTarget(selectedLinks, screenshotTarget)}
           target={screenshotTarget}
           onClose={() => setScreenshotTarget(null)}
         />

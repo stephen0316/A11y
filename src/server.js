@@ -13,7 +13,6 @@ const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const REPORTS_DIR = path.join(ROOT_DIR, 'reports');
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
-const MAX_PREVIEW_SCREENSHOT_BYTES = 1.5 * 1024 * 1024;
 const ALLOWED_ORIGINS = new Set(
   String(process.env.ALLOWED_ORIGINS || '')
     .split(',')
@@ -121,8 +120,8 @@ async function handleAudit(request, response) {
       id: path.basename(path.dirname(report.reportPath)),
       target: report.target,
       audit: toBrowserAudit(audit),
-      markdown: renderBrowserMarkdown(audit),
-      preview: await readScreenshotPreview(report.screenshotPath),
+      markdown: renderMarkdownReport(audit),
+      artifacts: await readBrowserArtifacts(report, audit),
     },
   });
 }
@@ -136,31 +135,37 @@ function toBrowserAudit(audit) {
   };
 }
 
-function renderBrowserMarkdown(audit) {
-  const browserAudit = toBrowserAudit(audit);
-  return renderMarkdownReport({
-    ...browserAudit,
-    meta: {
-      ...browserAudit.meta,
-      artifacts: {
-        screenshot: '仅在本次浏览器会话中提供，不保存到历史记录',
-        flowScreenshots: [],
-        domSnapshot: '未持久保存',
-        accessibilityTree: '未持久保存',
-      },
+async function readBrowserArtifacts(report, audit) {
+  const artifactNames = audit.meta?.artifacts || {};
+  const artifactDirectory = path.dirname(report.screenshotPath);
+  const flowScreenshots = await Promise.all(
+    (artifactNames.flowScreenshots || []).map(async (item) => ({
+      index: item.index,
+      name: path.basename(item.screenshot),
+      dataUrl: await readImageDataUrl(path.join(artifactDirectory, path.basename(item.screenshot))),
+    })),
+  );
+
+  return {
+    screenshot: {
+      name: artifactNames.screenshot || 'screenshot.png',
+      dataUrl: await readImageDataUrl(report.screenshotPath),
     },
-  });
+    flowScreenshots,
+    domSnapshot: {
+      name: artifactNames.domSnapshot || 'dom-snapshot.html',
+      content: await readFile(path.join(artifactDirectory, path.basename(artifactNames.domSnapshot || 'dom-snapshot.html')), 'utf8'),
+    },
+    accessibilityTree: {
+      name: artifactNames.accessibilityTree || 'accessibility-tree.json',
+      content: await readFile(path.join(artifactDirectory, path.basename(artifactNames.accessibilityTree || 'accessibility-tree.json')), 'utf8'),
+    },
+  };
 }
 
-async function readScreenshotPreview(screenshotPath) {
-  const screenshot = await readFile(screenshotPath);
-  if (screenshot.byteLength > MAX_PREVIEW_SCREENSHOT_BYTES) {
-    return { screenshotDataUrl: '', screenshotOmitted: true };
-  }
-  return {
-    screenshotDataUrl: `data:image/png;base64,${screenshot.toString('base64')}`,
-    screenshotOmitted: false,
-  };
+async function readImageDataUrl(filePath) {
+  const image = await readFile(filePath);
+  return `data:image/png;base64,${image.toString('base64')}`;
 }
 
 async function handleGenerateSteps(request, response) {

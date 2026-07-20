@@ -96,7 +96,7 @@ try {
   await page.locator('.screenshot-modal .modal-close').click();
   await page.getByText('导出为').click();
   const exportLabels = await page.locator('[data-testid="export-options"] a').evaluateAll((links) => links.map((link) => link.textContent.trim()));
-  assert.deepEqual(exportLabels, ['Markdown', 'JSON', '截图']);
+  assert.deepEqual(exportLabels, ['Markdown', 'JSON', '截图', 'DOM 快照', '无障碍树']);
   await page.getByRole('heading', { name: '本次走查结果' }).click();
   await page.waitForTimeout(200);
   assert.equal(await page.locator('[data-testid="export-options"]').count(), 0, 'Export menu should close after outside click');
@@ -118,6 +118,12 @@ try {
   await page.getByRole('link', { name: '历史报告' }).click();
   await assertVisibleText(page, '已存档报告');
   await assertVisibleText(page, '示例缺陷页');
+  await page.getByRole('button', { name: /示例缺陷页/ }).first().click();
+  await page.getByLabel('查看完整页面截图').click();
+  await page.locator('.screenshot-modal').waitFor({ timeout: 8000 });
+  const historyScreenshotSrc = await page.locator('.screenshot-stage img').getAttribute('src');
+  assert.match(historyScreenshotSrc || '', /^data:image\/png;base64,/, 'Historical reports should keep their local screenshot evidence');
+  await page.locator('.screenshot-modal .modal-close').click();
 
   await page.screenshot({ path: screenshotPath, fullPage: true });
   console.log(`Web UI check passed: ${screenshotPath}`);
