@@ -12,6 +12,7 @@ import {
   Play,
   Plus,
   Sparkles,
+  Trash2,
   X,
 } from 'lucide-react';
 import { Badge } from './components/ui/badge.jsx';
@@ -45,8 +46,8 @@ import {
 } from './components/ui/tooltip.jsx';
 import { MoveRightIcon } from './components/ui/move-right-icon.jsx';
 import { cn } from './lib/utils.js';
+import { clearLocalReports, createLocalDownloadLinks, listLocalReports, saveLocalReport } from './lib/local-reports.js';
 
-const LAST_AUDIT_KEY = 'a11y:lastAuditReport';
 const AUDIT_DRAFT_KEY = 'a11y:auditDraft';
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
 const DEFAULT_AUDIT_FORM = {
@@ -64,28 +65,6 @@ function apiUrl(value) {
   }
   const pathname = value.startsWith('/') ? value : `/${value}`;
   return API_BASE_URL ? `${API_BASE_URL}${pathname}` : pathname;
-}
-
-function resolveReportLinks(links) {
-  if (!links || typeof links !== 'object') {
-    return links || null;
-  }
-  const resolved = { ...links };
-  for (const key of ['report', 'audit', 'screenshot', 'domSnapshot', 'accessibilityTree']) {
-    if (resolved[key]) {
-      resolved[key] = apiUrl(resolved[key]);
-    }
-  }
-  if (resolved.flowScreenshots && typeof resolved.flowScreenshots === 'object') {
-    resolved.flowScreenshots = Object.fromEntries(
-      Object.entries(resolved.flowScreenshots).map(([key, value]) => [key, apiUrl(value)]),
-    );
-  }
-  return resolved;
-}
-
-function resolveReport(report) {
-  return report ? { ...report, links: resolveReportLinks(report.links) } : report;
 }
 
 const viewportOptions = [
@@ -246,18 +225,20 @@ function AuditPage() {
   const [screenshotTarget, setScreenshotTarget] = React.useState(null);
 
   React.useEffect(() => {
-    const saved = localStorage.getItem(LAST_AUDIT_KEY);
-    if (!saved) {
-      return;
-    }
-    try {
-      const report = JSON.parse(saved);
-      setAudit(report.audit || null);
-      setLinks(resolveReportLinks(report.links));
-      setStepPlan(report.audit?.meta?.target?.stepPlan || null);
-    } catch {
-      localStorage.removeItem(LAST_AUDIT_KEY);
-    }
+    let mounted = true;
+    listLocalReports()
+      .then((reports) => {
+        if (!mounted || !reports[0]) {
+          return;
+        }
+        setAudit(reports[0].audit || null);
+        setLinks(createLocalDownloadLinks(reports[0]));
+        setStepPlan(reports[0].audit?.meta?.target?.stepPlan || null);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   React.useEffect(() => {
@@ -296,11 +277,11 @@ function AuditPage() {
       if (!response.ok || !data.ok) {
         throw new Error(data.error || '走查失败');
       }
-      const report = resolveReport(data.report);
+      const report = data.report;
       setAudit(report.audit);
-      setLinks(report.links);
+      setLinks(createLocalDownloadLinks(report, { includePreview: true }));
       setStepPlan(report.audit?.meta?.target?.stepPlan || null);
-      localStorage.setItem(LAST_AUDIT_KEY, JSON.stringify(report));
+      await saveLocalReport(report);
     } catch (runError) {
       setError(runError.message || '走查失败');
     } finally {
@@ -309,7 +290,6 @@ function AuditPage() {
   }
 
   function startNewAudit() {
-    localStorage.removeItem(LAST_AUDIT_KEY);
     localStorage.removeItem(AUDIT_DRAFT_KEY);
     setForm(DEFAULT_AUDIT_FORM);
     setSteps([]);
@@ -674,8 +654,8 @@ function ExportMenu({ links }) {
   const items = [
     { label: 'Markdown', href: links.report },
     { label: 'JSON', href: links.audit },
-    { label: 'AX Tree', href: links.accessibilityTree },
-  ];
+    { label: '截图', href: links.screenshot },
+  ].filter((item) => item.href);
 
   return (
     <DropdownMenu modal={false}>
@@ -710,9 +690,15 @@ function SummaryStrip({ audit, links, taskStateFilter, onTaskStateChange, onOpen
   return (
     <>
       <div className="summary-strip">
-        <button className="screenshot-preview" type="button" aria-label="查看完整页面截图" onClick={() => onOpenScreenshot({ label: '完整页面截图', screenshotSrc: links?.screenshot })}>
+        <button
+          className="screenshot-preview"
+          type="button"
+          aria-label="查看完整页面截图"
+          disabled={!links?.screenshot}
+          onClick={() => onOpenScreenshot({ label: '完整页面截图', screenshotSrc: links?.screenshot })}
+        >
           {links?.screenshot ? <img src={links.screenshot} alt="页面首屏截图" /> : <div className="screenshot-fallback">暂无截图</div>}
-          <span>点击查看完整截图</span>
+          <span>{links?.screenshot ? '点击查看完整截图' : '截图仅保留在本次走查中'}</span>
         </button>
         <div className="summary-brief">
           <div className="summary-metric-row">
@@ -1829,17 +1815,38 @@ function HistoryPage() {
   const [selectedAudit, setSelectedAudit] = React.useState(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState('');
+  const [clearing, setClearing] = React.useState(false);
   const [severityFilter, setSeverityFilter] = React.useState('all');
   const [taskStateFilter, setTaskStateFilter] = React.useState('all');
   const [screenshotTarget, setScreenshotTarget] = React.useState(null);
   const historyShellRef = React.useRef(null);
   const historyDetailRef = React.useRef(null);
+  const selectedLinks = React.useMemo(
+    () => (selectedReport ? createLocalDownloadLinks(selectedReport) : null),
+    [selectedReport],
+  );
 
   React.useEffect(() => {
-    fetch(apiUrl('/api/reports'))
-      .then((response) => readJsonResponse(response))
-      .then((data) => setReports((data.reports || []).map(resolveReport)))
-      .finally(() => setLoading(false));
+    let mounted = true;
+    listLocalReports()
+      .then((items) => {
+        if (mounted) {
+          setReports(items);
+        }
+      })
+      .catch((error) => {
+        if (mounted) {
+          setDetailError(error.message || '历史报告读取失败');
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const filteredIssues = React.useMemo(() => {
@@ -1874,16 +1881,30 @@ function HistoryPage() {
     setDetailLoading(true);
 
     try {
-      const response = await fetch(apiUrl(report.links?.audit));
-      const audit = await readJsonResponse(response);
-      if (!response.ok) {
-        throw new Error(audit.error || '历史报告读取失败');
-      }
-      setSelectedAudit(audit);
+      setSelectedAudit(report.audit);
     } catch (error) {
       setDetailError(error.message || '历史报告读取失败');
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  async function clearHistory() {
+    if (!window.confirm('清空此浏览器中的全部历史报告？此操作不会影响其他设备，且无法恢复。')) {
+      return;
+    }
+    setClearing(true);
+    try {
+      await clearLocalReports();
+      setReports([]);
+      setSelectedReport(null);
+      setSelectedAudit(null);
+      setScreenshotTarget(null);
+      setDetailError('');
+    } catch (error) {
+      setDetailError(error.message || '清空本地历史失败');
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -1910,6 +1931,10 @@ function HistoryPage() {
             最近一次记录 <strong>{reports[0] ? formatDate(reports[0].generatedAt) : '—'}</strong>
           </span>
         </div>
+        <Button type="button" variant="ghost" size="sm" onClick={clearHistory} disabled={clearing || !reports.length}>
+          <Trash2 className="h-4 w-4" />
+          {clearing ? '清空中' : '清空本地记录'}
+        </Button>
       </section>
       <section
         className={cn('history-shell', selectedReport && 'has-detail', loading && 'is-loading')}
@@ -1958,7 +1983,7 @@ function HistoryPage() {
           <section className="result-panel history-detail-panel" ref={historyDetailRef}>
             <PanelHeader
               title={selectedReport.target}
-              action={selectedAudit ? <ExportMenu links={selectedReport.links} /> : null}
+              action={selectedAudit ? <ExportMenu links={selectedLinks} /> : null}
             />
             <div className="result-content">
               {detailLoading ? <EmptyState title="正在加载报告" description="正在读取这次走查的完整结果。" /> : null}
@@ -1966,7 +1991,7 @@ function HistoryPage() {
               {!detailLoading && !detailError && selectedAudit ? (
                 <ReportDetailContent
                   audit={selectedAudit}
-                  links={selectedReport.links}
+                  links={selectedLinks}
                   severityFilter={severityFilter}
                   onSeverityChange={setSeverityFilter}
                   taskStateFilter={taskStateFilter}
@@ -1980,9 +2005,9 @@ function HistoryPage() {
         ) : null}
       </section>
 
-      {screenshotTarget && screenshotSrcForTarget(selectedReport?.links, screenshotTarget) ? (
+      {screenshotTarget && screenshotSrcForTarget(null, screenshotTarget) ? (
         <ScreenshotModal
-          src={screenshotSrcForTarget(selectedReport.links, screenshotTarget)}
+          src={screenshotSrcForTarget(null, screenshotTarget)}
           target={screenshotTarget}
           onClose={() => setScreenshotTarget(null)}
         />

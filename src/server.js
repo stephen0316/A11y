@@ -1,9 +1,10 @@
 import { createServer } from 'node:http';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditTargets } from './index.js';
 import { generateScenarioSteps } from './ai/steps.js';
+import { renderMarkdownReport } from './report.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -12,6 +13,7 @@ const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const REPORTS_DIR = path.join(ROOT_DIR, 'reports');
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
+const MAX_PREVIEW_SCREENSHOT_BYTES = 1.5 * 1024 * 1024;
 const ALLOWED_ORIGINS = new Set(
   String(process.env.ALLOWED_ORIGINS || '')
     .split(',')
@@ -51,11 +53,6 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/reports') {
-      sendJson(response, 200, { reports: await listReports() });
-      return;
-    }
-
     if (request.method === 'POST' && url.pathname === '/api/audit') {
       await handleAudit(request, response);
       return;
@@ -63,11 +60,6 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && url.pathname === '/api/steps') {
       await handleGenerateSteps(request, response);
-      return;
-    }
-
-    if (request.method === 'GET' && url.pathname.startsWith('/reports/')) {
-      await serveFile(response, REPORTS_DIR, decodeURIComponent(url.pathname.replace(/^\/reports\//, '')));
       return;
     }
 
@@ -122,21 +114,53 @@ async function handleAudit(request, response) {
 
   const report = result.reports[0];
   const audit = JSON.parse(await readFile(report.jsonPath, 'utf8'));
-  const reportUrls = urlsForReport(report, audit);
 
   sendJson(response, 200, {
     ok: true,
     report: {
+      id: path.basename(path.dirname(report.reportPath)),
       target: report.target,
-      ...reportUrls,
-      audit: {
-        meta: audit.meta,
-        summary: audit.summary,
-        ai: audit.ai,
-        issues: audit.issues,
+      audit: toBrowserAudit(audit),
+      markdown: renderBrowserMarkdown(audit),
+      preview: await readScreenshotPreview(report.screenshotPath),
+    },
+  });
+}
+
+function toBrowserAudit(audit) {
+  return {
+    meta: audit.meta,
+    summary: audit.summary,
+    ai: audit.ai,
+    issues: audit.issues,
+  };
+}
+
+function renderBrowserMarkdown(audit) {
+  const browserAudit = toBrowserAudit(audit);
+  return renderMarkdownReport({
+    ...browserAudit,
+    meta: {
+      ...browserAudit.meta,
+      artifacts: {
+        screenshot: '仅在本次浏览器会话中提供，不保存到历史记录',
+        flowScreenshots: [],
+        domSnapshot: '未持久保存',
+        accessibilityTree: '未持久保存',
       },
     },
   });
+}
+
+async function readScreenshotPreview(screenshotPath) {
+  const screenshot = await readFile(screenshotPath);
+  if (screenshot.byteLength > MAX_PREVIEW_SCREENSHOT_BYTES) {
+    return { screenshotDataUrl: '', screenshotOmitted: true };
+  }
+  return {
+    screenshotDataUrl: `data:image/png;base64,${screenshot.toString('base64')}`,
+    screenshotOmitted: false,
+  };
 }
 
 async function handleGenerateSteps(request, response) {
@@ -272,75 +296,6 @@ function parseViewport(value) {
     throw new Error('viewport must use WIDTHxHEIGHT.');
   }
   return { width: Number(match[1]), height: Number(match[2]) };
-}
-
-async function listReports() {
-  let entries = [];
-  try {
-    entries = await readdir(REPORTS_DIR, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const reports = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-
-    const auditPath = path.join(REPORTS_DIR, entry.name, 'audit.json');
-    try {
-      const audit = JSON.parse(await readFile(auditPath, 'utf8'));
-      const stats = await stat(auditPath);
-      reports.push({
-        id: entry.name,
-        target: audit.meta?.target?.name || entry.name,
-        url: audit.meta?.target?.url || '',
-        generatedAt: audit.meta?.generatedAt || stats.mtime.toISOString(),
-        summary: audit.summary || {},
-        links: linksForRun(entry.name, audit),
-      });
-    } catch {
-      // Ignore incomplete report directories.
-    }
-  }
-
-  return reports.sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)));
-}
-
-function urlsForReport(report, audit = null) {
-  const runId = path.basename(path.dirname(report.reportPath));
-  return {
-    id: runId,
-    links: linksForRun(runId, audit),
-  };
-}
-
-function encodePath(value) {
-  return String(value).split('/').map(encodeURIComponent).join('/');
-}
-
-function linksForRun(runId, audit = null) {
-  const encodedRunId = encodePath(runId);
-  const links = {
-    report: `/reports/${encodedRunId}/report.md`,
-    audit: `/reports/${encodedRunId}/audit.json`,
-    screenshot: `/reports/${encodedRunId}/screenshot.png`,
-    domSnapshot: `/reports/${encodedRunId}/dom-snapshot.html`,
-    accessibilityTree: `/reports/${encodedRunId}/accessibility-tree.json`,
-  };
-  const flowScreenshots = audit?.meta?.artifacts?.flowScreenshots;
-  if (Array.isArray(flowScreenshots) && flowScreenshots.length) {
-    links.flowScreenshots = Object.fromEntries(
-      flowScreenshots
-        .filter((item) => item?.index && item?.screenshot)
-        .map((item) => [
-          String(item.index),
-          `/reports/${encodedRunId}/${encodePath(item.screenshot)}`,
-        ]),
-    );
-  }
-  return links;
 }
 
 async function serveFile(response, root, requestedPath) {

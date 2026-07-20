@@ -10,9 +10,6 @@
     },
     "api/steps.js": {
       "maxDuration": 60
-    },
-    "api/reports.js": {
-      "maxDuration": 60
     }
   }
 }

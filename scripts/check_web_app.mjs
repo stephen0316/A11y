@@ -89,25 +89,14 @@ try {
   await page.locator('.analysis-modal .modal-close').click();
   await assertVisibleText(page, '文字颜色对比度不足');
   await assertVisibleText(page, '图片缺少替代文本');
-  await page.locator('.issue-screenshot-button[aria-label*="FLOW-S1"]').first().click();
-  await page.locator('.screenshot-highlight').waitFor({ timeout: 8000 });
-  const flowModalLayout = await page.locator('.screenshot-modal').evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    return { position: getComputedStyle(element).position, top: rect.top, bottom: rect.bottom };
-  });
-  assert.equal(flowModalLayout.position, 'fixed', 'Screenshot modal should remain fixed above the report');
-  assert.ok(flowModalLayout.top >= 0 && flowModalLayout.bottom <= 1000, 'Screenshot modal should fit within the viewport');
-  const flowScreenshotSrc = await page.locator('.screenshot-stage img').getAttribute('src');
-  assert.match(flowScreenshotSrc || '', /flow-step-1\.png/, 'Flow issue locator should use the matching step screenshot');
-  await page.locator('.screenshot-modal .modal-close').click();
   await page.getByLabel('查看完整页面截图').click();
   await page.locator('.screenshot-modal').waitFor({ timeout: 8000 });
   const fullScreenshotSrc = await page.locator('.screenshot-stage img').getAttribute('src');
-  assert.match(fullScreenshotSrc || '', /screenshot\.png/, 'Full screenshot preview should open the final screenshot');
+  assert.match(fullScreenshotSrc || '', /^data:image\/png;base64,/, 'Current-run screenshot preview should stay in the browser response');
   await page.locator('.screenshot-modal .modal-close').click();
   await page.getByText('导出为').click();
   const exportLabels = await page.locator('[data-testid="export-options"] a').evaluateAll((links) => links.map((link) => link.textContent.trim()));
-  assert.deepEqual(exportLabels, ['Markdown', 'JSON', 'AX Tree']);
+  assert.deepEqual(exportLabels, ['Markdown', 'JSON', '截图']);
   await page.getByRole('heading', { name: '本次走查结果' }).click();
   await page.waitForTimeout(200);
   assert.equal(await page.locator('[data-testid="export-options"]').count(), 0, 'Export menu should close after outside click');

@@ -95,19 +95,24 @@ npm run audit -- --scenario ./a11y.scenario.example.json
 
 ### 单 Vercel 部署
 
-仓库已包含同域 Vercel Functions：`/api/audit` 执行走查，`/api/steps` 生成自然语言步骤，`/api/reports` 读取历史报告。走查函数使用 Serverless Chromium，报告、截图和导出文件保存至 Vercel Blob，不再依赖本地 `/reports` 目录。
+仓库已包含同域 Vercel Functions：`/api/audit` 执行走查，`/api/steps` 生成自然语言步骤。走查函数使用 Serverless Chromium；走查完成后，完整报告只返回给发起请求的浏览器，不会写入 Vercel Blob 或线上历史记录。
 
 部署步骤：
 
 1. 将本仓库导入 Vercel 并部署。`vercel.json` 会构建 `dist/`，输出首页与 `history.html`，并配置走查函数的最长执行时间。
-2. 在 Vercel Dashboard 的 Storage 创建 **Public** Blob Store，点击 Connect Project。Vercel 会自动注入 `BLOB_STORE_ID` 和 OIDC 凭据。
-3. 如需 AI，在 Project Settings -> Environment Variables 中添加 `GEMINI_API_KEY`，然后重新部署。
-4. 不要设置 `VITE_API_BASE_URL`。单 Vercel 模式下前端直接调用同域 `/api/*` Functions。
-5. 在 Project Settings -> Domains 将 `a11y.woooooo.cn` 绑定到生产部署，并按 Vercel 页面提供的 DNS 记录配置域名。
+2. 如需 AI，在 Project Settings -> Environment Variables 中添加 `GEMINI_API_KEY`，然后重新部署。
+3. 不要设置 `VITE_API_BASE_URL`。单 Vercel 模式下前端直接调用同域 `/api/*` Functions。
+4. 在 Project Settings -> Domains 将 `a11y.woooooo.cn` 绑定到生产部署，并按 Vercel 页面提供的 DNS 记录配置域名。
 
 Vercel Function 仍受计划的执行时长、内存和函数包体积限制。走查页面过大、网络缓慢、需要登录或运行复杂任务时可能超时；`api/audit` 已配置 `maxDuration: 300`，若当前套餐不支持该时长，请按 Vercel 的套餐上限调低该值。
 
-`.env.example` 列出了需要在 Vercel 中配置的变量。不要将真实 Blob Token 或 Gemini API Key 提交到仓库。
+`.env.example` 列出了需要在 Vercel 中配置的变量。不要将真实 Gemini API Key 提交到仓库。
+
+### 浏览器本地历史
+
+Web App 会将最近 30 份走查报告保存到当前浏览器的 IndexedDB。历史记录不会上传到服务器，也不会与其他浏览器、设备或访问者共享；用户可在“历史报告”页面清空本地记录。切换浏览器、清理站点数据或更换设备后，这些记录不会保留。
+
+截图只在本次走查响应中临时保留；如果截图超过 1.5 MB，为避免超出 Function 响应限制，界面会提示未保留截图。历史记录仍可导出 Markdown 和 JSON。
 
 也可以不用 Docker，在具备 Chromium 系统依赖的 Linux 主机执行：
 
@@ -136,7 +141,7 @@ npm run audit -- --url "file:///Volumes/vibecoding/A11y/examples/sample-target.h
 
 ## 输出
 
-每次运行会在 `reports/<页面名>-<时间戳>/` 下生成：
+CLI 与本地服务模式下，每次运行会在 `reports/<页面名>-<时间戳>/` 下生成：
 
 - `report.md`：给 UED、QA、研发阅读的走查报告。
 - `audit.json`：完整机器可读结果。
@@ -145,6 +150,8 @@ npm run audit -- --url "file:///Volumes/vibecoding/A11y/examples/sample-target.h
 - `accessibility-tree.json`：浏览器可访问性树。
 
 每个问题都包含规则来源、影响用户、复现步骤、证据、严重级别、修复建议和责任角色。启用 Gemini 后，`audit.json` 会额外包含 `ai` 字段，报告中会出现 AI 走查摘要、AI 语义复核项和 AI 增强修复建议。
+
+线上 Web App 不会在 Vercel 保存这些文件；它只返回本次报告，并将不含截图、DOM 快照与 Accessibility Tree 大文件的报告记录保存到当前浏览器。
 
 ## 场景文件格式
 

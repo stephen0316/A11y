@@ -1,5 +1,5 @@
 import { normalizeVercelAuditPayload } from '../src/vercel/input.js';
-import { runAndStoreVercelAudit } from '../src/vercel/reports.js';
+import { runVercelAudit } from '../src/vercel/reports.js';
 
 export default async function handler(request, response) {
   if (request.method !== 'POST') {
@@ -9,7 +9,7 @@ export default async function handler(request, response) {
   }
   try {
     const target = await normalizeVercelAuditPayload(request.body);
-    const report = await runAndStoreVercelAudit(target, request.body);
+    const report = await runVercelAudit(target, request.body);
     response.status(200).json({ ok: true, report });
   } catch (error) {
     console.error(error);
