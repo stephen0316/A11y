@@ -3,3 +3,4 @@ reports/
 dist/
 .DS_Store
 *.log
+.vercel
