@@ -713,7 +713,7 @@ function SummaryStrip({ audit, links, taskStateFilter, onTaskStateChange, onOpen
           <div className="summary-ai-brief">
             <div className="summary-ai-title">
               <div>
-                <span><Sparkles className="h-4 w-4" />走查分析</span>
+                <span><Sparkles className="h-4 w-4" />AI 摘要</span>
                 {audit.ai?.status === 'failed' ? <Badge variant="major">降级</Badge> : null}
               </div>
               <Button
