@@ -1405,7 +1405,7 @@ function IssueGroupCard({ group, onOpenScreenshot }) {
       </div>
       <section className="issue-fields">
         {isGrouped ? null : <IssueEvidence issue={issue} onOpenScreenshot={onOpenScreenshot} />}
-        {enhancement ? <IssueEnhancement enhancement={enhancement} issue={issue} /> : null}
+        <IssueEnhancement enhancement={enhancement} issue={issue} />
       </section>
       {isGrouped ? (
         <AffectedElements issues={group.issues} onOpenScreenshot={onOpenScreenshot} />
@@ -1489,12 +1489,15 @@ function IssueScreenshotButton({ issue, onOpenScreenshot }) {
 }
 
 function IssueEnhancement({ enhancement, issue }) {
+  const userImpact = enhancement?.userImpact || issue.impactUsers;
+  const developerFix = enhancement?.developerFix || issue.recommendation;
+
   return (
     <>
-      {enhancement.userImpact ? <p className="issue-field-row"><strong>用户影响：</strong>{enhancement.userImpact}</p> : null}
+      {userImpact ? <p className="issue-field-row"><strong>用户影响：</strong>{userImpact}</p> : null}
       <p className="issue-field-row"><strong>判断依据：</strong><RuleSourceLink issue={issue} /></p>
-      {enhancement.developerFix ? <p className="issue-field-row"><strong>优化建议：</strong>{enhancement.developerFix}</p> : null}
-      {enhancement.codeExample ? <CopyableCodeBlock code={enhancement.codeExample} /> : null}
+      {developerFix ? <p className="issue-field-row"><strong>修复建议：</strong>{developerFix}</p> : null}
+      {enhancement?.codeExample ? <CopyableCodeBlock code={enhancement.codeExample} /> : null}
     </>
   );
 }
