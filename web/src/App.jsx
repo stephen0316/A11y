@@ -1404,7 +1404,7 @@ function IssueGroupCard({ group, onOpenScreenshot }) {
         {isGrouped ? <Badge>{group.issues.length} 个实例</Badge> : <Badge>{issue.id}</Badge>}
       </div>
       <section className="issue-fields">
-        {isGrouped ? null : <IssueEvidence issue={issue} onOpenScreenshot={onOpenScreenshot} />}
+        <IssueEvidence issue={issue} count={group.issues.length} onOpenScreenshot={onOpenScreenshot} />
         <IssueEnhancement enhancement={enhancement} issue={issue} />
       </section>
       {isGrouped ? (
@@ -1428,7 +1428,7 @@ function AffectedElements({ issues, onOpenScreenshot }) {
           <li key={issue.id}>
             <div className={cn('affected-element-summary', evidenceRect(issue.evidence) && 'has-screenshot')}>
               <span className="affected-element-index">{index + 1}</span>
-              <p>{evidenceSummary(issue.evidence)}</p>
+              <p>{evidenceSubject(issue.evidence)}</p>
               <IssueScreenshotButton issue={issue} onOpenScreenshot={onOpenScreenshot} />
               <Badge>{issue.id}</Badge>
             </div>
@@ -1440,16 +1440,21 @@ function AffectedElements({ issues, onOpenScreenshot }) {
   );
 }
 
-function IssueEvidence({ issue, onOpenScreenshot }) {
+function IssueEvidence({ issue, count = 1, onOpenScreenshot }) {
   const evidence = issue?.evidence;
   if (!evidence || !Object.keys(evidence).length) {
     return null;
   }
 
+  const isPageScope = evidenceIsPageScope(evidence);
+  const subject = count > 1
+    ? `${count} 个${elementTypeLabel(evidence) || '元素'}`
+    : evidenceSubject(evidence);
+
   return (
     <p className="issue-field-row">
-      <strong>问题元素：</strong>
-      <span>{evidenceSummary(evidence)}</span>
+      <strong>{isPageScope ? '问题范围：' : '问题元素：'}</strong>
+      <span>{subject}</span>
       <IssueScreenshotButton issue={issue} onOpenScreenshot={onOpenScreenshot} />
     </p>
   );
@@ -1494,6 +1499,7 @@ function IssueEnhancement({ enhancement, issue }) {
 
   return (
     <>
+      <p className="issue-field-row"><strong>检测结果：</strong>{detectionResult(issue)}</p>
       {userImpact ? <p className="issue-field-row"><strong>用户影响：</strong>{userImpact}</p> : null}
       <p className="issue-field-row"><strong>判断依据：</strong><RuleSourceLink issue={issue} /></p>
       {developerFix ? <p className="issue-field-row"><strong>修复建议：</strong>{developerFix}</p> : null}
@@ -1517,62 +1523,61 @@ function IssueEvidenceDetails({ evidence }) {
   );
 }
 
-function evidenceSummary(evidence) {
-  const flowPrefix = evidence.flowStep?.index ? `第 ${evidence.flowStep.index} 步后 · ` : '';
+function evidenceSubject(evidence) {
   if (evidence.previous && evidence.current) {
-    return `${flowPrefix}从「${evidenceText(evidence.previous)}」跳到「${evidenceText(evidence.current)}」，需要复核页面结构顺序。`;
+    return `从「${evidenceText(evidence.previous)}」到「${evidenceText(evidence.current)}」的标题结构`;
   }
 
   if (Array.isArray(evidence.path)) {
-    return `${flowPrefix}键盘遍历记录包含 ${evidence.path.length} 个焦点节点，实际聚焦到 ${evidence.uniqueFocusedCount || evidence.path.length} 个不同元素。`;
+    return '键盘导航过程';
   }
 
-  const parts = [];
+  if (evidenceIsPageScope(evidence)) {
+    return '整个页面';
+  }
+
   const elementType = elementTypeLabel(evidence);
-  const text = evidenceText(evidence);
-  const selector = evidenceSelector(evidence);
+  const text = evidenceContentLabel(evidence);
 
   if (elementType && text) {
-    parts.push(`${elementType}「${text}」`);
-  } else if (elementType) {
-    parts.push(elementType);
-  } else if (text) {
-    parts.push(`文本「${text}」`);
+    return `${elementType}「${text}」`;
+  }
+  if (elementType) {
+    return elementType;
+  }
+  if (text) {
+    return `文本「${text}」`;
   }
 
-  if (selector) {
-    parts.push(selector);
+  return '待复核元素';
+}
+
+function detectionResult(issue) {
+  const evidence = issue?.evidence || {};
+  const failureSummary = String(evidence.failureSummary || '');
+  const contrast = failureSummary.match(/contrast of\s+([\d.]+).*?Expected contrast ratio of\s+([\d.]+):1/is);
+
+  if (contrast) {
+    return `文字与背景的对比度为 ${contrast[1]}:1，低于普通文本所需的 ${contrast[2]}:1。`;
   }
-  if (evidence.role) {
-    parts.push(`role=${evidence.role}`);
+  if (/does not have a main landmark/i.test(failureSummary)) {
+    return '页面缺少 main 主内容地标。';
   }
-  if (evidence.type) {
-    parts.push(`type=${evidence.type}`);
+  if (/heading order invalid/i.test(failureSummary)) {
+    return '标题层级存在跳级，页面结构顺序不符合要求。';
   }
-  if (evidence.tabIndex !== undefined && evidence.tabIndex !== null && Number(evidence.tabIndex) >= 0) {
-    parts.push('可键盘聚焦');
+  if (/missing lang attribute/i.test(String(evidence.current || ''))) {
+    return '页面根元素未设置语言声明。';
   }
-  if (evidence.disabled === true) {
-    parts.push('禁用状态');
-  }
-  if (evidence.rect?.width !== undefined && evidence.rect?.height !== undefined) {
-    parts.push(`当前尺寸 ${evidence.rect.width}×${evidence.rect.height}px`);
-    if (Number(evidence.rect.x) < 0 || Number(evidence.rect.y) < 0) {
-      parts.push('可能位于视口外');
-    }
-  }
-  if (evidence.current) {
-    parts.push(`当前状态：${String(evidence.current)}`);
-  }
-  if (evidence.failureSummary) {
-    parts.push(evidence.failureSummary);
+  if (issue?.title === '可点击目标尺寸小于 24px' && evidence.rect) {
+    return `可点击区域为 ${evidence.rect.width}×${evidence.rect.height}px，小于建议的 24×24px。`;
   }
 
-  return `${flowPrefix}${parts.length ? parts.join(' · ') : '系统记录到该问题的运行时元素和检测上下文，可展开查看问题定位信息。'}`;
+  return `检测到“${issue?.title || '无障碍'}”问题。`;
 }
 
 function elementTypeLabel(evidence) {
-  const tag = String(evidence.tag || '').toLowerCase();
+  const tag = evidenceTag(evidence);
   const role = String(evidence.role || '').toLowerCase();
   const type = String(evidence.type || '').toLowerCase();
 
@@ -1604,7 +1609,40 @@ function elementTypeLabel(evidence) {
 }
 
 function evidenceText(evidence) {
-  return String(evidence.name || evidence.text || evidence.alt || evidence.label || evidence.selector || '').trim();
+  return String(evidence?.name || evidence?.text || evidence?.alt || evidence?.label || '').trim();
+}
+
+function evidenceTag(evidence) {
+  const explicitTag = String(evidence?.tag || '').toLowerCase();
+  if (explicitTag) {
+    return explicitTag;
+  }
+  return String(evidence?.html || '').match(/^\s*<([a-z0-9-]+)/i)?.[1]?.toLowerCase() || '';
+}
+
+function evidenceContentLabel(evidence) {
+  const directText = evidenceText(evidence);
+  if (directText) {
+    return directText;
+  }
+
+  const html = String(evidence?.html || '');
+  const alt = html.match(/\balt=["']([^"']+)["']/i)?.[1];
+  if (alt) {
+    return alt.trim();
+  }
+  const content = html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return content.length <= 80 ? content : '';
+}
+
+function evidenceIsPageScope(evidence) {
+  const selector = evidenceSelector(evidence);
+  return evidenceTag(evidence) === 'html' || selector === 'html';
 }
 
 function evidenceSelector(evidence) {
