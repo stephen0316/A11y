@@ -19,15 +19,16 @@ const WCAG_22_AA_TAGS = [
 
 export async function runTargetAudit(page, target, options = {}) {
   const stamp = nowStamp();
+  const timings = createAuditTimings();
   const runName = `${slugify(target.name)}-${stamp}`;
   const targetDir = path.resolve(options.outDir || 'reports', runName);
-  await mkdir(targetDir, { recursive: true });
+  await timePhase(timings, 'prepare', () => mkdir(targetDir, { recursive: true }));
 
-  await page.goto(target.url, { waitUntil: 'networkidle' });
+  await timePhase(timings, 'navigate', () => page.goto(target.url, { waitUntil: 'networkidle' }));
   const flowSnapshots = [];
-  const scenarioExecution = await runScenarioSteps(page, target.steps, {
+  const scenarioExecution = await timePhase(timings, 'scenario', () => runScenarioSteps(page, target.steps, {
     onAfterStep: async ({ step, index, entry, stateFingerprint, navigated }) => {
-      const snapshot = await collectFlowStepSnapshot(page, {
+      const snapshot = await timePhase(timings, 'scenarioSnapshots', () => collectFlowStepSnapshot(page, {
         target,
         step,
         index,
@@ -36,14 +37,14 @@ export async function runTargetAudit(page, target, options = {}) {
         navigated,
         maxTabs: options.maxTabs || 30,
         targetDir,
-      });
+      }));
       flowSnapshots.push(snapshot);
       return {
         issueCount: snapshot.summary.total,
         bySeverity: snapshot.summary.bySeverity,
       };
     },
-  });
+  }));
 
   const screenshotPath = path.join(targetDir, 'screenshot.png');
   const domPath = path.join(targetDir, 'dom-snapshot.html');
@@ -51,38 +52,40 @@ export async function runTargetAudit(page, target, options = {}) {
   const jsonPath = path.join(targetDir, 'audit.json');
   const reportPath = path.join(targetDir, 'report.md');
 
-  await page.screenshot({ path: screenshotPath, fullPage: true });
-  const domHtml = await page.content();
-  await writeFile(domPath, domHtml, 'utf8');
+  await timePhase(timings, 'screenshot', () => page.screenshot({ path: screenshotPath, fullPage: true }));
+  const domHtml = await timePhase(timings, 'domSnapshot', () => page.content());
+  await timePhase(timings, 'writeDomSnapshot', () => writeFile(domPath, domHtml, 'utf8'));
   // Capture before keyboard traversal changes focus, so final-state matching
   // compares the same visual and semantic state as the task-step snapshot.
-  const finalStateFingerprint = flowStateFingerprint(await captureFlowState(page));
+  const finalStateFingerprint = flowStateFingerprint(await timePhase(timings, 'finalStateFingerprint', () => captureFlowState(page)));
 
   const {
     axe,
     domSignals,
     keyboard,
-  } = await collectAuditState(page, {
+  } = await timePhase(timings, 'finalAuditState', () => collectAuditState(page, {
     maxTabs: options.maxTabs || 30,
     includeKeyboard: true,
-  });
-  const accessibilityTree = await collectAccessibilityTree(page);
-  await writeFile(axTreePath, JSON.stringify(accessibilityTree, null, 2), 'utf8');
+    timings,
+    prefix: 'finalAudit',
+  }));
+  const accessibilityTree = await timePhase(timings, 'accessibilityTree', () => collectAccessibilityTree(page));
+  await timePhase(timings, 'writeAccessibilityTree', () => writeFile(axTreePath, JSON.stringify(accessibilityTree, null, 2), 'utf8'));
 
-  const finalIssues = buildIssues({
+  const finalIssues = await timePhase(timings, 'buildIssues', () => buildIssues({
     target,
     axe,
     domSignals,
     keyboard,
-  });
-  const finalStateResult = mergeFinalAuditIntoFlowState({
+  }));
+  const finalStateResult = await timePhase(timings, 'mergeFlowState', () => mergeFinalAuditIntoFlowState({
     flowSnapshots,
     finalIssues,
     finalStateFingerprint,
     finalUrl: page.url(),
-  });
+  }));
   const issues = finalStateResult.issues;
-  const ai = await runAiAudit({
+  const ai = await timePhase(timings, 'ai', () => runAiAudit({
     target,
     axe,
     domSignals,
@@ -90,7 +93,8 @@ export async function runTargetAudit(page, target, options = {}) {
     accessibilityTree,
     issues,
     flowSnapshots,
-  }, options.ai || {});
+  }, options.ai || {}));
+  const finishedTimings = finishAuditTimings(timings);
 
   const audit = {
     meta: {
@@ -117,6 +121,7 @@ export async function runTargetAudit(page, target, options = {}) {
         domSnapshot: 'dom-snapshot.html',
         accessibilityTree: 'accessibility-tree.json',
       },
+      timings: finishedTimings,
     },
     summary: summarizeIssues(issues),
     axe,
@@ -126,14 +131,49 @@ export async function runTargetAudit(page, target, options = {}) {
     issues,
   };
 
-  await writeFile(jsonPath, JSON.stringify(audit, null, 2), 'utf8');
-  await writeFile(reportPath, renderMarkdownReport(audit), 'utf8');
+  await timePhase(timings, 'writeAuditJson', () => writeFile(jsonPath, JSON.stringify(audit, null, 2), 'utf8'));
+  await timePhase(timings, 'writeMarkdownReport', () => writeFile(reportPath, renderMarkdownReport(audit), 'utf8'));
+  console.info('audit timings', JSON.stringify({
+    target: target.name,
+    url: target.url,
+    totalMs: finishedTimings.totalMs,
+    phases: finishedTimings.phases,
+    issueCount: issues.length,
+    aiStatus: ai.status,
+    aiModel: ai.model,
+    attemptedModels: ai.attemptedModels,
+  }));
 
   return {
     target: target.name,
     reportPath,
     jsonPath,
     screenshotPath,
+  };
+}
+
+function createAuditTimings() {
+  return {
+    startedAt: Date.now(),
+    phases: {},
+  };
+}
+
+async function timePhase(timings, phase, task) {
+  const startedAt = Date.now();
+  try {
+    return await task();
+  } finally {
+    timings.phases[phase] = (timings.phases[phase] || 0) + Date.now() - startedAt;
+  }
+}
+
+function finishAuditTimings(timings) {
+  return {
+    totalMs: Date.now() - timings.startedAt,
+    phases: Object.fromEntries(
+      Object.entries(timings.phases).sort(([, a], [, b]) => b - a),
+    ),
   };
 }
 
@@ -310,14 +350,17 @@ async function collectFlowStepSnapshot(page, { target, step, index, entry, state
   };
 }
 
-async function collectAuditState(page, { maxTabs = 30, includeKeyboard = true } = {}) {
-  const axe = await new AxeBuilder({ page })
+async function collectAuditState(page, { maxTabs = 30, includeKeyboard = true, timings, prefix = 'audit' } = {}) {
+  const run = (phase, task) => timings
+    ? timePhase(timings, `${prefix}.${phase}`, task)
+    : task();
+  const axe = await run('axeAnalyze', () => new AxeBuilder({ page })
     .withTags(WCAG_22_AA_TAGS)
-    .analyze();
-  await attachAxeNodeRects(page, axe);
-  const domSignals = await collectDomSignals(page);
+    .analyze());
+  await run('axeRects', () => attachAxeNodeRects(page, axe));
+  const domSignals = await run('domSignals', () => collectDomSignals(page));
   const keyboard = includeKeyboard
-    ? await runKeyboardAudit(page, { maxTabs })
+    ? await run('keyboard', () => runKeyboardAudit(page, { maxTabs }))
     : emptyKeyboardAudit(maxTabs);
 
   return {
