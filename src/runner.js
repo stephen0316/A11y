@@ -52,7 +52,7 @@ export async function runTargetAudit(page, target, options = {}) {
   const jsonPath = path.join(targetDir, 'audit.json');
   const reportPath = path.join(targetDir, 'report.md');
 
-  await timePhase(timings, 'screenshot', () => page.screenshot({ path: screenshotPath, fullPage: true }));
+  await timePhase(timings, 'screenshot', () => takeStableScreenshot(page, screenshotPath));
   const domHtml = await timePhase(timings, 'domSnapshot', () => page.content());
   await timePhase(timings, 'writeDomSnapshot', () => writeFile(domPath, domHtml, 'utf8'));
   // Capture before keyboard traversal changes focus, so final-state matching
@@ -245,9 +245,90 @@ async function settleScenarioState(page) {
   if (typeof page.waitForLoadState === 'function') {
     await page.waitForLoadState('domcontentloaded', { timeout: 2000 }).catch(() => {});
   }
-  if (typeof page.waitForTimeout === 'function') {
-    await page.waitForTimeout(80);
+  await waitForVisualStability(page);
+}
+
+/**
+ * Wait for the browser to finish the visual work that is not covered by
+ * DOMContentLoaded: web fonts, in-document images and a stable layout over
+ * consecutive animation frames. This deliberately does not dismiss dialogs,
+ * menus or other task-created overlays: they are legitimate page states.
+ */
+export async function waitForVisualStability(page, { timeout = 6000 } = {}) {
+  if (typeof page.evaluate === 'function') {
+    await page.evaluate(async ({ timeoutMs }) => {
+      const wait = (promise, limit) => Promise.race([
+        Promise.resolve(promise).catch(() => {}),
+        new Promise((resolve) => window.setTimeout(resolve, limit)),
+      ]);
+      const frame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const remaining = (startedAt) => Math.max(0, timeoutMs - (Date.now() - startedAt));
+      const startedAt = Date.now();
+
+      if (document.fonts?.ready) {
+        await wait(document.fonts.ready, remaining(startedAt));
+      }
+
+      const images = Array.from(document.images || []);
+      await wait(Promise.all(images.map(async (image) => {
+        if (!image.complete) {
+          await new Promise((resolve) => {
+            const finish = () => {
+              image.removeEventListener('load', finish);
+              image.removeEventListener('error', finish);
+              resolve();
+            };
+            image.addEventListener('load', finish, { once: true });
+            image.addEventListener('error', finish, { once: true });
+            window.setTimeout(finish, remaining(startedAt));
+          });
+        }
+        if (typeof image.decode === 'function' && image.complete && image.naturalWidth > 0) {
+          await image.decode().catch(() => {});
+        }
+      })), remaining(startedAt));
+
+      const layoutFingerprint = () => {
+        const root = document.documentElement;
+        const body = document.body;
+        const viewport = window.visualViewport;
+        return [
+          root.scrollWidth,
+          root.scrollHeight,
+          root.clientWidth,
+          root.clientHeight,
+          body?.scrollWidth || 0,
+          body?.scrollHeight || 0,
+          viewport?.width || window.innerWidth,
+          viewport?.height || window.innerHeight,
+        ].join(':');
+      };
+
+      let previous = '';
+      let stableFrames = 0;
+      while (remaining(startedAt) > 0 && stableFrames < 2) {
+        await frame();
+        const current = layoutFingerprint();
+        stableFrames = current === previous ? stableFrames + 1 : 0;
+        previous = current;
+      }
+    }, { timeoutMs: timeout }).catch(() => {});
   }
+
+  // Give the compositor a final chance to paint after the last stable frame.
+  if (typeof page.waitForTimeout === 'function') {
+    await page.waitForTimeout(120);
+  }
+}
+
+async function takeStableScreenshot(page, screenshotPath) {
+  await waitForVisualStability(page);
+  await page.screenshot({
+    path: screenshotPath,
+    fullPage: true,
+    animations: 'disabled',
+    caret: 'hide',
+  });
 }
 
 async function captureFlowState(page) {
@@ -336,7 +417,7 @@ async function collectFlowStepSnapshot(page, { target, step, index, entry, state
     keyboard,
   }).map((issue) => annotateFlowStepIssue(issue, stepInfo));
   const screenshot = `flow-step-${index + 1}.png`;
-  await page.screenshot({ path: path.join(targetDir, screenshot), fullPage: true });
+  await takeStableScreenshot(page, path.join(targetDir, screenshot));
 
   return {
     ...stepInfo,

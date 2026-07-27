@@ -1,6 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeFinalAuditIntoFlowState, runScenarioSteps } from '../src/runner.js';
+import { mergeFinalAuditIntoFlowState, runScenarioSteps, waitForVisualStability } from '../src/runner.js';
+
+test('waitForVisualStability waits for browser rendering before a screenshot', async () => {
+  const calls = [];
+  const page = {
+    evaluate: async (_callback, options) => {
+      calls.push(['evaluate', options]);
+    },
+    waitForTimeout: async (milliseconds) => {
+      calls.push(['waitForTimeout', milliseconds]);
+    },
+  };
+
+  await waitForVisualStability(page, { timeout: 1234 });
+
+  assert.deepEqual(calls, [
+    ['evaluate', { timeoutMs: 1234 }],
+    ['waitForTimeout', 120],
+  ]);
+});
 
 test('runScenarioSteps only audits steps that change the interaction state', async () => {
   let stateIndex = 0;
