@@ -46,6 +46,7 @@ import {
 } from './components/ui/tooltip.jsx';
 import { MoveRightIcon } from './components/ui/move-right-icon.jsx';
 import { cn } from './lib/utils.js';
+import { downloadInspectionChecklist } from './lib/inspection-checklist.js';
 import { clearLocalReports, createLocalDownloadLinks, listLocalReports, saveLocalReport } from './lib/local-reports.js';
 
 const AUDIT_DRAFT_KEY = 'a11y:auditDraft';
@@ -535,7 +536,7 @@ function AuditPage() {
         <section className="result-panel">
           <PanelHeader
             title="本次走查结果"
-            action={!loading && audit && links ? <ExportMenu links={links} /> : null}
+            action={!loading && audit && links ? <ExportMenu audit={audit} links={links} /> : null}
           />
           <div className="result-content">
             {loading ? (
@@ -650,14 +651,23 @@ function Field({ label, htmlFor, tip, children }) {
   );
 }
 
-function ExportMenu({ links }) {
+function ExportMenu({ audit, links }) {
+  const [exportingChecklist, setExportingChecklist] = React.useState(false);
   const items = [
     { label: 'Markdown', href: links.report },
     { label: 'JSON', href: links.audit },
-    { label: '截图', href: links.screenshot },
     { label: 'DOM 快照', href: links.domSnapshot },
     { label: '无障碍树', href: links.accessibilityTree },
   ].filter((item) => item.href);
+
+  async function exportChecklist() {
+    setExportingChecklist(true);
+    try {
+      await downloadInspectionChecklist({ audit, links });
+    } finally {
+      setExportingChecklist(false);
+    }
+  }
 
   return (
     <DropdownMenu modal={false}>
@@ -668,6 +678,12 @@ function ExportMenu({ links }) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="export-options" data-testid="export-options">
+        <DropdownMenuItem disabled={exportingChecklist} onSelect={(event) => {
+          event.preventDefault();
+          exportChecklist();
+        }}>
+          {exportingChecklist ? '正在生成走查测试清单…' : '走查测试清单'}
+        </DropdownMenuItem>
         {items.map((item) => (
           <DropdownMenuItem asChild key={item.label}>
             <a href={item.href} target="_blank" rel="noreferrer">
@@ -1555,7 +1571,7 @@ function evidenceSubject(evidence) {
 function detectionResult(issue) {
   const evidence = issue?.evidence || {};
   const failureSummary = String(evidence.failureSummary || '');
-  const contrast = failureSummary.match(/contrast of\s+([\d.]+).*?Expected contrast ratio of\s+([\d.]+):1/is);
+  const contrast = failureSummary.match(/contrast of\s+(\d+(?:\.\d+)?).*?Expected contrast ratio of\s+(\d+(?:\.\d+)?):1/is);
 
   if (contrast) {
     return `文字与背景的对比度为 ${contrast[1]}:1，低于普通文本所需的 ${contrast[2]}:1。`;
@@ -2026,7 +2042,7 @@ function HistoryPage() {
           <section className="result-panel history-detail-panel" ref={historyDetailRef}>
             <PanelHeader
               title={selectedReport.target}
-              action={selectedAudit ? <ExportMenu links={selectedLinks} /> : null}
+              action={selectedAudit ? <ExportMenu audit={selectedAudit} links={selectedLinks} /> : null}
             />
             <div className="result-content">
               {detailLoading ? <EmptyState title="正在加载报告" description="正在读取这次走查的完整结果。" /> : null}

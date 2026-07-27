@@ -95,8 +95,8 @@ try {
   assert.match(fullScreenshotSrc || '', /^data:image\/png;base64,/, 'Current-run screenshot preview should stay in the browser response');
   await page.locator('.screenshot-modal .modal-close').click();
   await page.getByText('导出为').click();
-  const exportLabels = await page.locator('[data-testid="export-options"] a').evaluateAll((links) => links.map((link) => link.textContent.trim()));
-  assert.deepEqual(exportLabels, ['Markdown', 'JSON', '截图', 'DOM 快照', '无障碍树']);
+  const exportLabels = await page.locator('[data-testid="export-options"] [role="menuitem"]').evaluateAll((items) => items.map((item) => item.textContent.trim()));
+  assert.deepEqual(exportLabels, ['走查测试清单', 'Markdown', 'JSON', 'DOM 快照', '无障碍树']);
   await page.getByRole('heading', { name: '本次走查结果' }).click();
   await page.waitForTimeout(200);
   assert.equal(await page.locator('[data-testid="export-options"]').count(), 0, 'Export menu should close after outside click');
