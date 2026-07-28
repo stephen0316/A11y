@@ -44,8 +44,8 @@ test('buildLocalStepPlan supports hover before clicking submenu items', () => {
   assert.equal(plan.steps[1].name, '我的栏目');
 });
 
-test('generateScenarioSteps uses Gemini output when enabled', async () => {
-  let generationConfig = null;
+test('generateScenarioSteps uses OpenAI-compatible output when enabled', async () => {
+  let requestBody = null;
   const result = await generateScenarioSteps({
     instruction: '点击新增，等待弹窗',
     target: { url: 'https://example.com' },
@@ -53,7 +53,7 @@ test('generateScenarioSteps uses Gemini output when enabled', async () => {
     enabled: true,
     apiKey: 'test-key',
     fetchImpl: async (_url, init) => {
-      generationConfig = JSON.parse(init.body).generation_config;
+      requestBody = JSON.parse(init.body);
       return {
         ok: true,
         json: async () => ({
@@ -71,8 +71,10 @@ test('generateScenarioSteps uses Gemini output when enabled', async () => {
     },
   });
 
-  assert.deepEqual(generationConfig, { temperature: 0.1 });
-  assert.equal(result.provider, 'gemini');
+  assert.equal(requestBody.temperature, 0.1);
+  assert.equal(requestBody.messages[0].role, 'system');
+  assert.equal(requestBody.messages[1].role, 'user');
+  assert.equal(result.provider, 'openai-compatible');
   assert.equal(result.confidence, 'high');
   assert.equal(result.steps[0].action, 'hover');
   assert.equal(result.steps[0].name, '新增');

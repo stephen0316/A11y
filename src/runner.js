@@ -6,7 +6,7 @@ import { runKeyboardAudit } from './keyboard.js';
 import { buildIssues } from './rules.js';
 import { renderMarkdownReport } from './report.js';
 import { nowStamp, slugify } from './utils.js';
-import { runAiAudit } from './ai/gemini.js';
+import { runAiAudit } from './ai/model.js';
 
 const WCAG_22_AA_TAGS = [
   'wcag2a',

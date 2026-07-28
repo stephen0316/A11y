@@ -77,8 +77,8 @@ Options:
   --max-tabs <number>      Keyboard Tab traversal depth. Default: 30.
   --viewport <WxH>         Browser viewport. Default: 1440x1000.
   --headful                Run Chromium with a visible browser window.
-  --ai                     Enable Gemini AI semantic review for this run.
-  --no-ai                  Disable Gemini AI semantic review.
+  --ai                     Enable AI semantic review for this run.
+  --no-ai                  Disable AI semantic review.
   --help                   Show this help.
 `);
 }

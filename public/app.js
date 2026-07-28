@@ -330,7 +330,7 @@ function renderAiPanel() {
     panel.innerHTML = `
       <header>
         <h4>AI 语义复核未启用</h4>
-        <span class="pill subtle">Gemini</span>
+        <span class="pill subtle">AI</span>
       </header>
       <p>${escapeHtml(ai.reason || '未配置 API Key 或本次关闭。')}</p>
     `;
@@ -343,7 +343,7 @@ function renderAiPanel() {
       <header>
         <div>
           <h4>AI 语义复核调用失败</h4>
-          <p>${escapeHtml(ai.model || 'gemini')}</p>
+          <p>${escapeHtml(ai.model || 'AI 模型')}</p>
         </div>
         <span class="pill Major">降级</span>
       </header>
@@ -358,7 +358,7 @@ function renderAiPanel() {
     <header>
       <div>
         <h4>AI 审计摘要</h4>
-        <p>${escapeHtml(ai.model || 'gemini')}</p>
+        <p>${escapeHtml(ai.model || 'AI 模型')}</p>
       </div>
       <span class="pill ${riskPill(summary.riskLevel)}">${escapeHtml(summary.riskLevel || 'unknown')}</span>
     </header>

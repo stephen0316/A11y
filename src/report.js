@@ -199,7 +199,7 @@ function renderAiSummary(ai) {
 
 function renderAiSummaryContent(summary, model) {
   const lines = [
-    `- 模型: ${model || 'gemini'}`,
+    `- 模型: ${model || 'AI 模型'}`,
     `- 结论: ${summary.verdict}`,
     `- 风险等级: ${summary.riskLevel}`,
   ];

@@ -1,4 +1,4 @@
-import { DEFAULT_GEMINI_MODEL, FALLBACK_GEMINI_MODELS } from './gemini.js';
+import { DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL, FALLBACK_AI_MODELS } from './model.js';
 
 const DEFAULT_STEP_TIMEOUT_MS = 45000;
 
@@ -68,22 +68,23 @@ export async function generateScenarioSteps(input = {}, options = {}) {
   }
 
   const localPlan = buildLocalStepPlan(instruction);
-  const apiKey = options.apiKey || process.env.GEMINI_API_KEY;
+  const apiKey = options.apiKey || process.env.AI_API_KEY;
   if (!options.enabled || !apiKey) {
     return localPlan;
   }
 
   try {
-    const aiPlan = await requestGeminiStepPlan({
+    const aiPlan = await requestAiStepPlan({
       apiKey,
-      model: options.model || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
+      baseUrl: options.baseUrl || process.env.AI_BASE_URL || DEFAULT_AI_BASE_URL,
+      model: options.model || process.env.AI_MODEL || DEFAULT_AI_MODEL,
       instruction,
       target: input.target || {},
       localPlan,
       fetchImpl: options.fetchImpl || fetch,
       timeoutMs: options.timeoutMs || DEFAULT_STEP_TIMEOUT_MS,
     });
-    const normalized = normalizeStepPlan(aiPlan, instruction, 'gemini');
+    const normalized = normalizeStepPlan(aiPlan, instruction, 'openai-compatible');
     return normalized.steps.length ? normalized : localPlan;
   } catch (error) {
     return {
@@ -142,8 +143,9 @@ function emptyStepPlan() {
   };
 }
 
-async function requestGeminiStepPlan({
+async function requestAiStepPlan({
   apiKey,
+  baseUrl,
   model,
   instruction,
   target,
@@ -155,23 +157,20 @@ async function requestGeminiStepPlan({
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetchImpl('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    const response = await fetchImpl(baseUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-goog-api-key': apiKey,
+        authorization: `Bearer ${apiKey}`,
       },
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        system_instruction: STEP_SYSTEM_INSTRUCTION,
-        input: buildStepPrompt({ instruction, target, localPlan }),
-        generation_config: buildStepGenerationConfig(),
-        response_format: {
-          type: 'text',
-          mime_type: 'application/json',
-          schema: STEP_RESPONSE_SCHEMA,
-        },
+        messages: [
+          { role: 'system', content: STEP_SYSTEM_INSTRUCTION },
+          { role: 'user', content: buildStepPrompt({ instruction, target, localPlan }) },
+        ],
+        temperature: 0.1,
       }),
     });
 
@@ -180,21 +179,22 @@ async function requestGeminiStepPlan({
     }));
 
     if (!response.ok) {
-      const error = new Error(`Gemini step generation failed: ${response.status} ${response.statusText} ${truncate(JSON.stringify(json), 300)}`);
+      const error = new Error(`AI step generation failed: ${response.status} ${response.statusText} ${truncate(JSON.stringify(json), 300)}`);
       error.status = response.status;
       throw error;
     }
 
-    const text = extractGeminiText(json);
+    const text = extractChatCompletionText(json);
     if (!text) {
-      throw new Error('Gemini response did not include output text.');
+      throw new Error('AI response did not include output text.');
     }
     return parseJsonText(text);
   } catch (error) {
-    if (FALLBACK_GEMINI_MODELS.length && !FALLBACK_GEMINI_MODELS.includes(model)) {
-      const fallbackModel = FALLBACK_GEMINI_MODELS[0];
-      return requestGeminiStepPlan({
+    if (FALLBACK_AI_MODELS.length && !FALLBACK_AI_MODELS.includes(model)) {
+      const fallbackModel = FALLBACK_AI_MODELS[0];
+      return requestAiStepPlan({
         apiKey,
+        baseUrl,
         model: fallbackModel,
         instruction,
         target,
@@ -229,10 +229,6 @@ function buildStepPrompt({ instruction, target, localPlan }) {
     '- fill 如果能判断字段名，给 label 和 selectors；value 必须来自任务描述。',
     '- 等待 toast、结果、弹窗时使用 waitForSelector，并给 status/dialog/toast 等候选 selectors。',
   ].join('\n');
-}
-
-function buildStepGenerationConfig() {
-  return { temperature: 0.1 };
 }
 
 function stepsFromSegment(segment) {
@@ -643,29 +639,15 @@ function unique(items) {
   return Array.from(new Set(items.filter(Boolean)));
 }
 
-function extractGeminiText(json) {
-  if (typeof json.output_text === 'string') {
-    return json.output_text;
+function extractChatCompletionText(json) {
+  const content = json?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') {
+    return content;
   }
-  if (typeof json.outputText === 'string') {
-    return json.outputText;
+  if (Array.isArray(content)) {
+    return content.map((part) => part?.text || '').join('');
   }
-  if (typeof json.text === 'string') {
-    return json.text;
-  }
-  const textBlocks = [];
-  for (const step of json.steps || []) {
-    for (const item of step.output || step.content || []) {
-      if (typeof item.text === 'string') {
-        textBlocks.push(item.text);
-      }
-    }
-  }
-  if (textBlocks.length) {
-    return textBlocks.join('');
-  }
-  const parts = json.candidates?.[0]?.content?.parts || [];
-  return parts.map((part) => part.text || '').join('');
+  return typeof json?.output_text === 'string' ? json.output_text : '';
 }
 
 function parseJsonText(text) {
@@ -679,7 +661,7 @@ function parseJsonText(text) {
 
 function sanitizeError(error) {
   if (error?.name === 'AbortError') {
-    return 'Gemini request timed out.';
+    return 'AI request timed out.';
   }
   return truncate(error?.message || String(error), 300);
 }

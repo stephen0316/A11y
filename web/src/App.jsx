@@ -2227,7 +2227,7 @@ function normalizeStepPayload(step) {
 
 function stepPlanLabel(plan) {
   const source = {
-    gemini: 'AI 生成',
+    'openai-compatible': 'AI 生成',
     'local-rules': '本地规则生成',
     'local-fallback': '本地兜底生成',
     manual: '手动步骤',

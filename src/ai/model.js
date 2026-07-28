@@ -1,10 +1,11 @@
 import { buildEvidencePack } from './evidence.js';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
-export const FALLBACK_GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
-const DEFAULT_GEMINI_TIMEOUT_MS = 90000;
-const DEFAULT_GEMINI_MAX_ATTEMPTS = 2;
-const DEFAULT_GEMINI_RETRY_DELAY_MS = 800;
+export const DEFAULT_AI_MODEL = 'Qwen3-VL-8B-Instruct';
+export const DEFAULT_AI_BASE_URL = 'https://onerouter.cmaiot.cn/v1/chat/completions';
+export const FALLBACK_AI_MODELS = [];
+const DEFAULT_AI_TIMEOUT_MS = 90000;
+const DEFAULT_AI_MAX_ATTEMPTS = 2;
+const DEFAULT_AI_RETRY_DELAY_MS = 800;
 
 export const EMPTY_AI_RESULT = {
   summary: null,
@@ -76,15 +77,15 @@ export const AI_RESPONSE_SCHEMA = {
 };
 
 export async function runAiAudit(input, options = {}) {
-  const model = options.model || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  const model = options.model || process.env.AI_MODEL || DEFAULT_AI_MODEL;
   const models = uniqueModels([
     model,
-    ...(options.fallbackModels || modelsFromEnv(process.env.GEMINI_FALLBACK_MODELS) || FALLBACK_GEMINI_MODELS),
+    ...(options.fallbackModels || modelsFromEnv(process.env.AI_FALLBACK_MODELS) || FALLBACK_AI_MODELS),
   ]);
   const evidencePack = buildEvidencePack(input);
   const base = {
     status: 'disabled',
-    provider: 'gemini',
+    provider: 'openai-compatible',
     model,
     attemptedModels: [],
     evidencePack,
@@ -98,23 +99,24 @@ export async function runAiAudit(input, options = {}) {
     };
   }
 
-  const apiKey = options.apiKey || process.env.GEMINI_API_KEY;
+  const apiKey = options.apiKey || process.env.AI_API_KEY;
   if (!apiKey) {
     return {
       ...base,
-      reason: 'GEMINI_API_KEY is not configured.',
+      reason: 'AI_API_KEY is not configured.',
     };
   }
 
   try {
-    const { raw, usedModel, attemptedModels } = await requestGeminiAuditWithFallback({
+    const { raw, usedModel, attemptedModels } = await requestAiAuditWithFallback({
       apiKey,
+      baseUrl: options.baseUrl || process.env.AI_BASE_URL || DEFAULT_AI_BASE_URL,
       models,
       evidencePack,
       fetchImpl: options.fetchImpl || fetch,
-      timeoutMs: options.timeoutMs || Number(process.env.GEMINI_TIMEOUT_MS || DEFAULT_GEMINI_TIMEOUT_MS),
-      maxAttempts: options.maxAttempts || Number(process.env.GEMINI_MAX_ATTEMPTS || DEFAULT_GEMINI_MAX_ATTEMPTS),
-      retryDelayMs: options.retryDelayMs ?? Number(process.env.GEMINI_RETRY_DELAY_MS || DEFAULT_GEMINI_RETRY_DELAY_MS),
+      timeoutMs: options.timeoutMs || Number(process.env.AI_TIMEOUT_MS || DEFAULT_AI_TIMEOUT_MS),
+      maxAttempts: options.maxAttempts || Number(process.env.AI_MAX_ATTEMPTS || DEFAULT_AI_MAX_ATTEMPTS),
+      retryDelayMs: options.retryDelayMs ?? Number(process.env.AI_RETRY_DELAY_MS || DEFAULT_AI_RETRY_DELAY_MS),
     });
     const normalized = normalizeAiResponse(raw, input.issues || []);
     return {
@@ -137,14 +139,15 @@ export async function runAiAudit(input, options = {}) {
   }
 }
 
-export async function requestGeminiAuditWithFallback({
+export async function requestAiAuditWithFallback({
   apiKey,
+  baseUrl = DEFAULT_AI_BASE_URL,
   models,
   evidencePack,
   fetchImpl = fetch,
-  timeoutMs = DEFAULT_GEMINI_TIMEOUT_MS,
-  maxAttempts = DEFAULT_GEMINI_MAX_ATTEMPTS,
-  retryDelayMs = DEFAULT_GEMINI_RETRY_DELAY_MS,
+  timeoutMs = DEFAULT_AI_TIMEOUT_MS,
+  maxAttempts = DEFAULT_AI_MAX_ATTEMPTS,
+  retryDelayMs = DEFAULT_AI_RETRY_DELAY_MS,
 }) {
   const attemptedModels = [];
   const errors = [];
@@ -155,8 +158,9 @@ export async function requestGeminiAuditWithFallback({
 
     for (let attempt = 1; attempt <= safeMaxAttempts; attempt += 1) {
       try {
-        const raw = await requestGeminiAudit({
+        const raw = await requestAiAudit({
           apiKey,
+          baseUrl,
           model,
           evidencePack,
           fetchImpl,
@@ -165,7 +169,7 @@ export async function requestGeminiAuditWithFallback({
         return { raw, usedModel: model, attemptedModels };
       } catch (error) {
         errors.push(`${model}#${attempt}: ${sanitizeError(error)}`);
-        if (!isRetryableGeminiError(error)) {
+        if (!isRetryableAiError(error)) {
           const finalError = new Error(errors.join(' | '));
           finalError.attemptedModels = attemptedModels;
           throw finalError;
@@ -177,33 +181,30 @@ export async function requestGeminiAuditWithFallback({
     }
   }
 
-  const finalError = new Error(errors.join(' | ') || 'Gemini request failed.');
+  const finalError = new Error(errors.join(' | ') || 'AI request failed.');
   finalError.attemptedModels = attemptedModels;
   throw finalError;
 }
 
-export async function requestGeminiAudit({ apiKey, model, evidencePack, fetchImpl = fetch, timeoutMs = 45000 }) {
+export async function requestAiAudit({ apiKey, baseUrl = DEFAULT_AI_BASE_URL, model, evidencePack, fetchImpl = fetch, timeoutMs = 45000 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetchImpl('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    const response = await fetchImpl(baseUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-goog-api-key': apiKey,
+        authorization: `Bearer ${apiKey}`,
       },
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        system_instruction: SYSTEM_INSTRUCTION,
-        input: buildPrompt(evidencePack),
-        generation_config: buildGenerationConfig(),
-        response_format: {
-          type: 'text',
-          mime_type: 'application/json',
-          schema: AI_RESPONSE_SCHEMA,
-        },
+        messages: [
+          { role: 'system', content: SYSTEM_INSTRUCTION },
+          { role: 'user', content: buildPrompt(evidencePack) },
+        ],
+        temperature: 0.2,
       }),
     });
 
@@ -212,15 +213,15 @@ export async function requestGeminiAudit({ apiKey, model, evidencePack, fetchImp
     }));
 
     if (!response.ok) {
-      const error = new Error(`Gemini request failed: ${response.status} ${response.statusText} ${truncate(JSON.stringify(json), 400)}`);
+      const error = new Error(`AI request failed: ${response.status} ${response.statusText} ${truncate(JSON.stringify(json), 400)}`);
       error.status = response.status;
       error.responseBody = json;
       throw error;
     }
 
-    const text = extractGeminiText(json);
+    const text = extractChatCompletionText(json);
     if (!text) {
-      throw new Error('Gemini response did not include output text.');
+      throw new Error('AI response did not include output text.');
     }
     return parseJsonText(text);
   } finally {
@@ -681,29 +682,15 @@ function toStringList(value) {
   return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
 }
 
-function extractGeminiText(json) {
-  if (typeof json.output_text === 'string') {
-    return json.output_text;
+function extractChatCompletionText(json) {
+  const content = json?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') {
+    return content;
   }
-  if (typeof json.outputText === 'string') {
-    return json.outputText;
+  if (Array.isArray(content)) {
+    return content.map((part) => part?.text || '').join('');
   }
-  if (typeof json.text === 'string') {
-    return json.text;
-  }
-  const textBlocks = [];
-  for (const step of json.steps || []) {
-    for (const item of step.output || step.content || []) {
-      if (typeof item.text === 'string') {
-        textBlocks.push(item.text);
-      }
-    }
-  }
-  if (textBlocks.length) {
-    return textBlocks.join('');
-  }
-  const parts = json.candidates?.[0]?.content?.parts || [];
-  return parts.map((part) => part.text || '').join('');
+  return typeof json?.output_text === 'string' ? json.output_text : '';
 }
 
 function parseJsonText(text) {
@@ -717,12 +704,12 @@ function parseJsonText(text) {
 
 function sanitizeError(error) {
   if (error?.name === 'AbortError') {
-    return 'Gemini request timed out.';
+    return 'AI request timed out.';
   }
   return truncate(error?.message || String(error), 500);
 }
 
-function isRetryableGeminiError(error) {
+function isRetryableAiError(error) {
   if (error?.name === 'AbortError') {
     return true;
   }
@@ -731,26 +718,6 @@ function isRetryableGeminiError(error) {
   }
   const message = String(error?.message || '').toLowerCase();
   return /timed out|high demand|temporar|try again|rate limit|overloaded/.test(message);
-}
-
-function buildGenerationConfig() {
-  const config = { temperature: 0.2 };
-  const thinkingLevel = resolveThinkingLevel();
-  if (thinkingLevel) {
-    config.thinking_level = thinkingLevel;
-  }
-  return config;
-}
-
-function resolveThinkingLevel() {
-  const configuredLevel = String(process.env.GEMINI_THINKING_LEVEL || '').toLowerCase();
-  if (['none', 'off', 'disabled', 'false', '0'].includes(configuredLevel)) {
-    return '';
-  }
-  if (configuredLevel === 'high') {
-    return 'high';
-  }
-  return '';
 }
 
 function retryDelayForAttempt(attempt, baseDelayMs) {

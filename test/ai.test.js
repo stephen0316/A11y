@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildEvidencePack } from '../src/ai/evidence.js';
-import { normalizeAiResponse, runAiAudit } from '../src/ai/gemini.js';
+import { normalizeAiResponse, runAiAudit } from '../src/ai/model.js';
 
 const sampleInput = {
   target: {
@@ -74,12 +74,12 @@ test('runAiAudit is disabled without enabled flag or key', async () => {
   const result = await runAiAudit(sampleInput, { enabled: false });
 
   assert.equal(result.status, 'disabled');
-  assert.equal(result.provider, 'gemini');
+  assert.equal(result.provider, 'openai-compatible');
   assert.equal(result.semanticFindings.length, 0);
   assert.equal(result.evidencePack.target.name, '示例缺陷页');
 });
 
-test('runAiAudit parses successful Gemini structured output', async () => {
+test('runAiAudit parses successful chat-completions structured output', async () => {
   const aiPayload = {
     summary: {
       verdict: '页面存在明确阻断问题。',
@@ -130,7 +130,7 @@ test('runAiAudit parses successful Gemini structured output', async () => {
   assert.equal(result.issueEnhancements[0].issueId, 'AXE-button-name-1');
 });
 
-test('runAiAudit falls back to the lightweight model on retryable failures', async () => {
+test('runAiAudit falls back to another model on retryable failures', async () => {
   const aiPayload = {
     summary: {
       verdict: 'fallback ok',
@@ -146,13 +146,13 @@ test('runAiAudit falls back to the lightweight model on retryable failures', asy
   const result = await runAiAudit(sampleInput, {
     enabled: true,
     apiKey: 'test-key',
-    model: 'gemini-3.5-flash',
-    fallbackModels: ['gemini-2.5-flash-lite'],
+    model: 'primary-model',
+    fallbackModels: ['fallback-model'],
     maxAttempts: 1,
     fetchImpl: async (_url, init) => {
       const body = JSON.parse(init.body);
       requestedModels.push(body.model);
-      if (body.model === 'gemini-3.5-flash') {
+      if (body.model === 'primary-model') {
         return {
           ok: false,
           status: 500,
@@ -168,9 +168,9 @@ test('runAiAudit falls back to the lightweight model on retryable failures', asy
   });
 
   assert.equal(result.status, 'enabled');
-  assert.equal(result.model, 'gemini-2.5-flash-lite');
-  assert.deepEqual(requestedModels, ['gemini-3.5-flash', 'gemini-2.5-flash-lite']);
-  assert.deepEqual(result.attemptedModels, ['gemini-3.5-flash', 'gemini-2.5-flash-lite']);
+  assert.equal(result.model, 'fallback-model');
+  assert.deepEqual(requestedModels, ['primary-model', 'fallback-model']);
+  assert.deepEqual(result.attemptedModels, ['primary-model', 'fallback-model']);
 });
 
 test('runAiAudit retries transient model failures before fallback', async () => {
@@ -189,8 +189,8 @@ test('runAiAudit retries transient model failures before fallback', async () => 
   const result = await runAiAudit(sampleInput, {
     enabled: true,
     apiKey: 'test-key',
-    model: 'gemini-3.5-flash',
-    fallbackModels: ['gemini-2.5-flash'],
+    model: 'primary-model',
+    fallbackModels: ['fallback-model'],
     maxAttempts: 2,
     retryDelayMs: 0,
     fetchImpl: async (_url, init) => {
@@ -212,121 +212,12 @@ test('runAiAudit retries transient model failures before fallback', async () => 
   });
 
   assert.equal(result.status, 'enabled');
-  assert.equal(result.model, 'gemini-2.5-flash');
-  assert.deepEqual(requestedModels, ['gemini-3.5-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']);
-  assert.deepEqual(result.attemptedModels, ['gemini-3.5-flash', 'gemini-2.5-flash']);
+  assert.equal(result.model, 'fallback-model');
+  assert.deepEqual(requestedModels, ['primary-model', 'primary-model', 'fallback-model']);
+  assert.deepEqual(result.attemptedModels, ['primary-model', 'fallback-model']);
 });
 
-test('runAiAudit omits Gemini thinking config by default for model compatibility', async () => {
-  let generationConfig;
-  const previousLevel = process.env.GEMINI_THINKING_LEVEL;
-  delete process.env.GEMINI_THINKING_LEVEL;
-  const aiPayload = {
-    summary: {
-      verdict: 'ok',
-      riskLevel: 'low',
-      keyFindings: [],
-      recommendedNextSteps: [],
-    },
-    semanticFindings: [],
-    issueEnhancements: [],
-  };
-
-  try {
-    await runAiAudit(sampleInput, {
-      enabled: true,
-      apiKey: 'test-key',
-      maxAttempts: 1,
-      fetchImpl: async (_url, init) => {
-        generationConfig = JSON.parse(init.body).generation_config;
-        return {
-          ok: true,
-          json: async () => ({ output_text: JSON.stringify(aiPayload) }),
-        };
-      },
-    });
-  } finally {
-    restoreEnv('GEMINI_THINKING_LEVEL', previousLevel);
-  }
-
-  assert.equal(generationConfig.temperature, 0.2);
-  assert.equal('thinking_level' in generationConfig, false);
-  assert.equal('thinking_budget' in generationConfig, false);
-});
-
-test('runAiAudit ignores unsupported low and medium Gemini thinking levels', async () => {
-  let generationConfig;
-  const previousLevel = process.env.GEMINI_THINKING_LEVEL;
-  process.env.GEMINI_THINKING_LEVEL = 'medium';
-
-  try {
-    await runAiAudit(sampleInput, {
-      enabled: true,
-      apiKey: 'test-key',
-      maxAttempts: 1,
-      fetchImpl: async (_url, init) => {
-        generationConfig = JSON.parse(init.body).generation_config;
-        return {
-          ok: true,
-          json: async () => ({
-            output_text: JSON.stringify({
-              summary: { verdict: 'ok', riskLevel: 'low', keyFindings: [], recommendedNextSteps: [] },
-              semanticFindings: [],
-              issueEnhancements: [],
-            }),
-          }),
-        };
-      },
-    });
-  } finally {
-    restoreEnv('GEMINI_THINKING_LEVEL', previousLevel);
-  }
-
-  assert.equal('thinking_level' in generationConfig, false);
-  assert.equal('thinking_budget' in generationConfig, false);
-});
-
-test('runAiAudit allows explicit high Gemini thinking level', async () => {
-  let generationConfig;
-  const previousLevel = process.env.GEMINI_THINKING_LEVEL;
-  process.env.GEMINI_THINKING_LEVEL = 'high';
-
-  try {
-    await runAiAudit(sampleInput, {
-      enabled: true,
-      apiKey: 'test-key',
-      maxAttempts: 1,
-      fetchImpl: async (_url, init) => {
-        generationConfig = JSON.parse(init.body).generation_config;
-        return {
-          ok: true,
-          json: async () => ({
-            output_text: JSON.stringify({
-              summary: { verdict: 'ok', riskLevel: 'low', keyFindings: [], recommendedNextSteps: [] },
-              semanticFindings: [],
-              issueEnhancements: [],
-            }),
-          }),
-        };
-      },
-    });
-  } finally {
-    restoreEnv('GEMINI_THINKING_LEVEL', previousLevel);
-  }
-
-  assert.equal(generationConfig.thinking_level, 'high');
-  assert.equal('thinking_budget' in generationConfig, false);
-});
-
-function restoreEnv(name, value) {
-  if (value === undefined) {
-    delete process.env[name];
-    return;
-  }
-  process.env[name] = value;
-}
-
-test('runAiAudit fails closed when Gemini returns malformed data', async () => {
+test('runAiAudit fails closed when the AI response is malformed', async () => {
   const result = await runAiAudit(sampleInput, {
     enabled: true,
     apiKey: 'test-key',
