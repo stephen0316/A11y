@@ -1819,7 +1819,7 @@ legend {
 
 .home-workspace .page-hero h1 {
   color: #10243b;
-  font-size: clamp(32px, 4vw, 48px);
+  font-size: clamp(32px, 3.2vw, 40px);
   letter-spacing: -0.065em;
 }
 
