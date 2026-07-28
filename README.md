@@ -32,11 +32,11 @@ API Key 只通过环境变量读取，不要写入源码、README、Notion 或�
 export AI_API_KEY="你的 API Key"
 ```
 
-默认使用 OpenAI Chat Completions 兼容接口，可按需覆盖模型或接口地址：
+默认使用 OpenAI Responses API 兼容接口，可按需覆盖模型或接口地址：
 
 ```bash
-export AI_MODEL="Qwen3-VL-8B-Instruct"
-export AI_BASE_URL="https://onerouter.cmaiot.cn/v1/chat/completions"
+export AI_MODEL="qwen3.7-max"
+export AI_BASE_URL="https://onerouter.cmaiot.cn/v1/responses"
 ```
 
 调用稳定性也可以通过以下参数调整：

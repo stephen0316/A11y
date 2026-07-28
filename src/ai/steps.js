@@ -166,10 +166,8 @@ async function requestAiStepPlan({
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        messages: [
-          { role: 'system', content: STEP_SYSTEM_INSTRUCTION },
-          { role: 'user', content: buildStepPrompt({ instruction, target, localPlan }) },
-        ],
+        instructions: STEP_SYSTEM_INSTRUCTION,
+        input: buildStepPrompt({ instruction, target, localPlan }),
         temperature: 0.1,
       }),
     });
@@ -184,7 +182,7 @@ async function requestAiStepPlan({
       throw error;
     }
 
-    const text = extractChatCompletionText(json);
+    const text = extractResponseText(json);
     if (!text) {
       throw new Error('AI response did not include output text.');
     }
@@ -639,15 +637,18 @@ function unique(items) {
   return Array.from(new Set(items.filter(Boolean)));
 }
 
-function extractChatCompletionText(json) {
-  const content = json?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') {
-    return content;
+function extractResponseText(json) {
+  if (typeof json?.output_text === 'string') {
+    return json.output_text;
   }
-  if (Array.isArray(content)) {
-    return content.map((part) => part?.text || '').join('');
+  const output = Array.isArray(json?.output) ? json.output : [];
+  const text = output.flatMap((item) => item?.content || [])
+    .map((part) => part?.text || '')
+    .join('');
+  if (text) {
+    return text;
   }
-  return typeof json?.output_text === 'string' ? json.output_text : '';
+  return json?.choices?.[0]?.message?.content || '';
 }
 
 function parseJsonText(text) {

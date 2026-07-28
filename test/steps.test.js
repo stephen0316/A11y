@@ -57,7 +57,7 @@ test('generateScenarioSteps uses OpenAI-compatible output when enabled', async (
       return {
         ok: true,
         json: async () => ({
-          output_text: JSON.stringify({
+          output: [{ content: [{ type: 'output_text', text: JSON.stringify({
             task: '点击新增，等待弹窗',
             confidence: 'high',
             assumptions: ['使用按钮文本定位'],
@@ -65,15 +65,16 @@ test('generateScenarioSteps uses OpenAI-compatible output when enabled', async (
               { action: 'hover', role: 'button', name: '新增', selectors: ['button:has-text("新增")'], description: '悬停新增' },
               { action: 'waitForSelector', selectors: ['[role="dialog"]'], description: '等待弹窗' },
             ],
-          }),
+          }) }] }],
         }),
       };
     },
   });
 
   assert.equal(requestBody.temperature, 0.1);
-  assert.equal(requestBody.messages[0].role, 'system');
-  assert.equal(requestBody.messages[1].role, 'user');
+  assert.equal(requestBody.instructions.includes('Web QA 自动化步骤生成器'), true);
+  assert.equal(requestBody.input.includes('点击新增，等待弹窗'), true);
+  assert.equal('messages' in requestBody, false);
   assert.equal(result.provider, 'openai-compatible');
   assert.equal(result.confidence, 'high');
   assert.equal(result.steps[0].action, 'hover');

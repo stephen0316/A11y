@@ -1,7 +1,7 @@
 import { buildEvidencePack } from './evidence.js';
 
-export const DEFAULT_AI_MODEL = 'Qwen3-VL-8B-Instruct';
-export const DEFAULT_AI_BASE_URL = 'https://onerouter.cmaiot.cn/v1/chat/completions';
+export const DEFAULT_AI_MODEL = 'qwen3.7-max';
+export const DEFAULT_AI_BASE_URL = 'https://onerouter.cmaiot.cn/v1/responses';
 export const FALLBACK_AI_MODELS = [];
 const DEFAULT_AI_TIMEOUT_MS = 90000;
 const DEFAULT_AI_MAX_ATTEMPTS = 2;
@@ -200,10 +200,8 @@ export async function requestAiAudit({ apiKey, baseUrl = DEFAULT_AI_BASE_URL, mo
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        messages: [
-          { role: 'system', content: SYSTEM_INSTRUCTION },
-          { role: 'user', content: buildPrompt(evidencePack) },
-        ],
+        instructions: SYSTEM_INSTRUCTION,
+        input: buildPrompt(evidencePack),
         temperature: 0.2,
       }),
     });
@@ -219,7 +217,7 @@ export async function requestAiAudit({ apiKey, baseUrl = DEFAULT_AI_BASE_URL, mo
       throw error;
     }
 
-    const text = extractChatCompletionText(json);
+    const text = extractResponseText(json);
     if (!text) {
       throw new Error('AI response did not include output text.');
     }
@@ -682,15 +680,18 @@ function toStringList(value) {
   return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
 }
 
-function extractChatCompletionText(json) {
-  const content = json?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') {
-    return content;
+function extractResponseText(json) {
+  if (typeof json?.output_text === 'string') {
+    return json.output_text;
   }
-  if (Array.isArray(content)) {
-    return content.map((part) => part?.text || '').join('');
+  const output = Array.isArray(json?.output) ? json.output : [];
+  const text = output.flatMap((item) => item?.content || [])
+    .map((part) => part?.text || '')
+    .join('');
+  if (text) {
+    return text;
   }
-  return typeof json?.output_text === 'string' ? json.output_text : '';
+  return json?.choices?.[0]?.message?.content || '';
 }
 
 function parseJsonText(text) {

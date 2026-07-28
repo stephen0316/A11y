@@ -79,7 +79,7 @@ test('runAiAudit is disabled without enabled flag or key', async () => {
   assert.equal(result.evidencePack.target.name, '示例缺陷页');
 });
 
-test('runAiAudit parses successful chat-completions structured output', async () => {
+test('runAiAudit sends a Responses API request and parses structured output', async () => {
   const aiPayload = {
     summary: {
       verdict: '页面存在明确阻断问题。',
@@ -118,10 +118,19 @@ test('runAiAudit parses successful chat-completions structured output', async ()
   const result = await runAiAudit(sampleInput, {
     enabled: true,
     apiKey: 'test-key',
-    fetchImpl: async () => ({
-      ok: true,
-      json: async () => ({ output_text: JSON.stringify(aiPayload) }),
-    }),
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      assert.equal(body.model, 'qwen3.7-max');
+      assert.equal(body.instructions.includes('无障碍走查专家'), true);
+      assert.equal(body.input.includes('无障碍走查证据'), true);
+      assert.equal('messages' in body, false);
+      return {
+        ok: true,
+        json: async () => ({
+          output: [{ content: [{ type: 'output_text', text: JSON.stringify(aiPayload) }] }],
+        }),
+      };
+    },
   });
 
   assert.equal(result.status, 'enabled');
