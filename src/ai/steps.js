@@ -1,4 +1,4 @@
-import { DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL, FALLBACK_AI_MODELS } from './model.js';
+import { DEFAULT_GEMINI_MODEL, FALLBACK_GEMINI_MODELS } from './model.js';
 
 const DEFAULT_STEP_TIMEOUT_MS = 45000;
 
@@ -68,23 +68,22 @@ export async function generateScenarioSteps(input = {}, options = {}) {
   }
 
   const localPlan = buildLocalStepPlan(instruction);
-  const apiKey = options.apiKey || process.env.AI_API_KEY;
+  const apiKey = options.apiKey || process.env.GEMINI_API_KEY;
   if (!options.enabled || !apiKey) {
     return localPlan;
   }
 
   try {
-    const aiPlan = await requestAiStepPlan({
+    const aiPlan = await requestGeminiStepPlan({
       apiKey,
-      baseUrl: options.baseUrl || process.env.AI_BASE_URL || DEFAULT_AI_BASE_URL,
-      model: options.model || process.env.AI_MODEL || DEFAULT_AI_MODEL,
+      model: options.model || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
       instruction,
       target: input.target || {},
       localPlan,
       fetchImpl: options.fetchImpl || fetch,
       timeoutMs: options.timeoutMs || DEFAULT_STEP_TIMEOUT_MS,
     });
-    const normalized = normalizeStepPlan(aiPlan, instruction, 'openai-compatible');
+    const normalized = normalizeStepPlan(aiPlan, instruction, 'gemini');
     return normalized.steps.length ? normalized : localPlan;
   } catch (error) {
     return {
@@ -143,9 +142,8 @@ function emptyStepPlan() {
   };
 }
 
-async function requestAiStepPlan({
+async function requestGeminiStepPlan({
   apiKey,
-  baseUrl,
   model,
   instruction,
   target,
@@ -157,18 +155,23 @@ async function requestAiStepPlan({
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetchImpl(baseUrl, {
+    const response = await fetchImpl('https://generativelanguage.googleapis.com/v1beta/interactions', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        authorization: `Bearer ${apiKey}`,
+        'x-goog-api-key': apiKey,
       },
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        instructions: STEP_SYSTEM_INSTRUCTION,
+        system_instruction: STEP_SYSTEM_INSTRUCTION,
         input: buildStepPrompt({ instruction, target, localPlan }),
-        temperature: 0.1,
+        generation_config: buildStepGenerationConfig(),
+        response_format: {
+          type: 'text',
+          mime_type: 'application/json',
+          schema: STEP_RESPONSE_SCHEMA,
+        },
       }),
     });
 
@@ -177,22 +180,21 @@ async function requestAiStepPlan({
     }));
 
     if (!response.ok) {
-      const error = new Error(`AI step generation failed: ${response.status} ${response.statusText} ${truncate(JSON.stringify(json), 300)}`);
+      const error = new Error(`Gemini step generation failed: ${response.status} ${response.statusText} ${truncate(JSON.stringify(json), 300)}`);
       error.status = response.status;
       throw error;
     }
 
-    const text = extractResponseText(json);
+    const text = extractGeminiText(json);
     if (!text) {
-      throw new Error('AI response did not include output text.');
+      throw new Error('Gemini response did not include output text.');
     }
     return parseJsonText(text);
   } catch (error) {
-    if (FALLBACK_AI_MODELS.length && !FALLBACK_AI_MODELS.includes(model)) {
-      const fallbackModel = FALLBACK_AI_MODELS[0];
-      return requestAiStepPlan({
+    if (FALLBACK_GEMINI_MODELS.length && !FALLBACK_GEMINI_MODELS.includes(model)) {
+      const fallbackModel = FALLBACK_GEMINI_MODELS[0];
+      return requestGeminiStepPlan({
         apiKey,
-        baseUrl,
         model: fallbackModel,
         instruction,
         target,
@@ -637,18 +639,33 @@ function unique(items) {
   return Array.from(new Set(items.filter(Boolean)));
 }
 
-function extractResponseText(json) {
-  if (typeof json?.output_text === 'string') {
+function buildStepGenerationConfig() {
+  return { temperature: 0.1 };
+}
+
+function extractGeminiText(json) {
+  if (typeof json.output_text === 'string') {
     return json.output_text;
   }
-  const output = Array.isArray(json?.output) ? json.output : [];
-  const text = output.flatMap((item) => item?.content || [])
-    .map((part) => part?.text || '')
-    .join('');
-  if (text) {
-    return text;
+  if (typeof json.outputText === 'string') {
+    return json.outputText;
   }
-  return json?.choices?.[0]?.message?.content || '';
+  if (typeof json.text === 'string') {
+    return json.text;
+  }
+  const textBlocks = [];
+  for (const step of json.steps || []) {
+    for (const item of step.output || step.content || []) {
+      if (typeof item.text === 'string') {
+        textBlocks.push(item.text);
+      }
+    }
+  }
+  if (textBlocks.length) {
+    return textBlocks.join('');
+  }
+  const parts = json.candidates?.[0]?.content?.parts || [];
+  return parts.map((part) => part.text || '').join('');
 }
 
 function parseJsonText(text) {
@@ -662,7 +679,7 @@ function parseJsonText(text) {
 
 function sanitizeError(error) {
   if (error?.name === 'AbortError') {
-    return 'AI request timed out.';
+    return 'Gemini request timed out.';
   }
   return truncate(error?.message || String(error), 300);
 }

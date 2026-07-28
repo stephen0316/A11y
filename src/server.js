@@ -281,7 +281,7 @@ function normalizeAiOptions(ai) {
   if (ai && typeof ai === 'object' && typeof ai.enabled === 'boolean') {
     return { enabled: ai.enabled };
   }
-  return { enabled: Boolean(process.env.AI_API_KEY) };
+  return { enabled: Boolean(process.env.GEMINI_API_KEY) };
 }
 
 function parseViewport(value) {

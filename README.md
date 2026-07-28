@@ -1,6 +1,6 @@
 # 无障碍走查
 
-无障碍走查是一个面向 UED + QA 的无障碍走查工具。它以可访问 URL 为输入，使用 Playwright 打开真实页面，结合 axe-core、DOM 信号、键盘行为、组件规则和 AI 生成可复核、可分派、可修复的问题报告。
+无障碍走查是一个面向 UED + QA 的无障碍走查工具。它以可访问 URL 为输入，使用 Playwright 打开真实页面，结合 axe-core、DOM 信号、键盘行为、组件规则和 Gemini AI 生成可复核、可分派、可修复的问题报告。
 
 ## 能力边界
 
@@ -8,8 +8,8 @@
 - 自动规则：颜色对比、alt、label、可访问名称、ARIA、语义结构等 axe-core 可覆盖问题。
 - 行为检测：Tab 路径、焦点可见性、疑似键盘陷阱。
 - 组件规则：弹窗/抽屉语义、状态反馈是否可被读屏器感知、目标尺寸。
-- AI 语义复核：图片替代文本质量、链接文案上下文、错误提示、图表等价文本、焦点顺序和状态反馈。
-- AI 修复建议：为规则问题补充根因、用户影响、研发修复建议、UED 建议、示例代码和可复制 issue 文案。
+- Gemini AI 语义复核：图片替代文本质量、链接文案上下文、错误提示、图表等价文本、焦点顺序和状态反馈。
+- Gemini AI 修复建议：为规则问题补充根因、用户影响、研发修复建议、UED 建议、示例代码和可复制 issue 文案。
 - 人工仍需确认：真实读屏体验、复杂业务流程、认知理解、字幕/音频描述质量。
 
 ## 安装
@@ -24,30 +24,30 @@ npm install
 npx playwright install chromium
 ```
 
-## Qwen AI 配置
+## Gemini AI 配置
 
-API Key 只通过环境变量读取，不要写入源码、README、Notion 或报告文件：
+Gemini Key 只通过环境变量读取，不要写入源码、README、Notion 或报告文件：
 
 ```bash
-export AI_API_KEY="你的 API Key"
+export GEMINI_API_KEY="你的 Gemini API Key"
 ```
 
-默认使用 OpenAI Responses API 兼容接口，可按需覆盖模型或接口地址：
+可选指定模型，默认优先使用 `gemini-3.5-flash`，并在高峰、限流或超时时自动切到备用模型：
 
 ```bash
-export AI_MODEL="qwen3.7-max"
-export AI_BASE_URL="https://onerouter.cmaiot.cn/v1/responses"
+export GEMINI_MODEL="gemini-3.5-flash"
+export GEMINI_FALLBACK_MODELS="gemini-2.5-flash,gemini-2.5-flash-lite"
 ```
 
 调用稳定性也可以通过以下参数调整：
 
 ```bash
-export AI_TIMEOUT_MS="90000"
-export AI_MAX_ATTEMPTS="2"
-export AI_RETRY_DELAY_MS="800"
+export GEMINI_TIMEOUT_MS="90000"
+export GEMINI_MAX_ATTEMPTS="2"
+export GEMINI_RETRY_DELAY_MS="800"
 ```
 
-Web App：页面走查会默认尝试运行 AI 语义复核；如果未设置 `AI_API_KEY` 或调用失败，报告会明确展示未运行/降级状态，并继续输出自动规则结果。
+Web App：页面走查会默认尝试运行 Gemini AI 语义复核；如果未设置 `GEMINI_API_KEY` 或调用失败，报告会明确展示未运行/降级状态，并继续输出自动规则结果。
 
 CLI：默认不启用 AI，避免批量走查产生意外 API 成本。需要 AI 时显式加 `--ai`。
 
@@ -77,7 +77,7 @@ http://127.0.0.1:3000
 npm run audit -- --url https://example.com --name "示例页面"
 ```
 
-走查单个页面并启用 AI：
+走查单个页面并启用 Gemini AI：
 
 ```bash
 npm run audit -- --url https://example.com --name "示例页面" --ai
@@ -89,7 +89,7 @@ npm run audit -- --url https://example.com --name "示例页面" --ai
 npm run audit -- --scenario ./a11y.scenario.example.json
 ```
 
-无障碍走查支持自然语言生成步骤：填写 `任务路径` 后点击 `生成步骤` 可预览和微调；也可以直接点击 `开始走查`，后端会自动解析并执行。没有配置 AI 时会使用本地规则解析常见登录、表单、弹窗、toast、按键和等待路径；配置后会优先用 AI 生成候选步骤，并保留本地规则兜底。
+无障碍走查支持自然语言生成步骤：填写 `任务路径` 后点击 `生成步骤` 可预览和微调；也可以直接点击 `开始走查`，后端会自动解析并执行。没有配置 Gemini 时会使用本地规则解析常见登录、表单、弹窗、toast、按键和等待路径；配置 Gemini 后会优先用 AI 生成候选步骤，并保留本地规则兜底。
 
 ## 线上部署
 
@@ -100,13 +100,13 @@ npm run audit -- --scenario ./a11y.scenario.example.json
 部署步骤：
 
 1. 将本仓库导入 Vercel 并部署。`vercel.json` 会构建 `dist/`，输出首页与 `history.html`，并配置走查函数的最长执行时间。
-2. 如需 AI，在 Project Settings -> Environment Variables 中添加 `AI_API_KEY`、`AI_BASE_URL` 和 `AI_MODEL`，然后重新部署。
+2. 如需 AI，在 Project Settings -> Environment Variables 中添加 `GEMINI_API_KEY`，然后重新部署。
 3. 不要设置 `VITE_API_BASE_URL`。单 Vercel 模式下前端直接调用同域 `/api/*` Functions。
 4. 在 Project Settings -> Domains 将 `a11y.woooooo.cn` 绑定到生产部署，并按 Vercel 页面提供的 DNS 记录配置域名。
 
 Vercel Function 仍受计划的执行时长、内存和函数包体积限制。走查页面过大、网络缓慢、需要登录或运行复杂任务时可能超时；`api/audit` 已配置 `maxDuration: 300`，若当前套餐不支持该时长，请按 Vercel 的套餐上限调低该值。
 
-`.env.example` 列出了需要在 Vercel 中配置的变量。不要将真实 API Key 提交到仓库。
+`.env.example` 列出了需要在 Vercel 中配置的变量。不要将真实 Gemini API Key 提交到仓库。
 
 ### 浏览器本地历史
 
@@ -149,7 +149,7 @@ CLI 与本地服务模式下，每次运行会在 `reports/<页面名>-<时间�
 - `dom-snapshot.html`：走查时的 DOM 快照。
 - `accessibility-tree.json`：浏览器可访问性树。
 
-每个问题都包含规则来源、影响用户、复现步骤、证据、严重级别、修复建议和责任角色。启用 AI 后，`audit.json` 会额外包含 `ai` 字段，报告中会出现 AI 走查摘要、AI 语义复核项和 AI 增强修复建议。
+每个问题都包含规则来源、影响用户、复现步骤、证据、严重级别、修复建议和责任角色。启用 Gemini 后，`audit.json` 会额外包含 `ai` 字段，报告中会出现 AI 走查摘要、AI 语义复核项和 AI 增强修复建议。
 
 线上 Web App 不会在 Vercel 保存这些文件；它只将完整报告返回给发起请求的浏览器，再由浏览器本地保存。
 

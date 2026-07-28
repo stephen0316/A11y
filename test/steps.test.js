@@ -44,8 +44,8 @@ test('buildLocalStepPlan supports hover before clicking submenu items', () => {
   assert.equal(plan.steps[1].name, '我的栏目');
 });
 
-test('generateScenarioSteps uses OpenAI-compatible output when enabled', async () => {
-  let requestBody = null;
+test('generateScenarioSteps uses Gemini output when enabled', async () => {
+  let generationConfig = null;
   const result = await generateScenarioSteps({
     instruction: '点击新增，等待弹窗',
     target: { url: 'https://example.com' },
@@ -53,11 +53,11 @@ test('generateScenarioSteps uses OpenAI-compatible output when enabled', async (
     enabled: true,
     apiKey: 'test-key',
     fetchImpl: async (_url, init) => {
-      requestBody = JSON.parse(init.body);
+      generationConfig = JSON.parse(init.body).generation_config;
       return {
         ok: true,
         json: async () => ({
-          output: [{ content: [{ type: 'output_text', text: JSON.stringify({
+          output_text: JSON.stringify({
             task: '点击新增，等待弹窗',
             confidence: 'high',
             assumptions: ['使用按钮文本定位'],
@@ -65,17 +65,14 @@ test('generateScenarioSteps uses OpenAI-compatible output when enabled', async (
               { action: 'hover', role: 'button', name: '新增', selectors: ['button:has-text("新增")'], description: '悬停新增' },
               { action: 'waitForSelector', selectors: ['[role="dialog"]'], description: '等待弹窗' },
             ],
-          }) }] }],
+          }),
         }),
       };
     },
   });
 
-  assert.equal(requestBody.temperature, 0.1);
-  assert.equal(requestBody.instructions.includes('Web QA 自动化步骤生成器'), true);
-  assert.equal(requestBody.input.includes('点击新增，等待弹窗'), true);
-  assert.equal('messages' in requestBody, false);
-  assert.equal(result.provider, 'openai-compatible');
+  assert.deepEqual(generationConfig, { temperature: 0.1 });
+  assert.equal(result.provider, 'gemini');
   assert.equal(result.confidence, 'high');
   assert.equal(result.steps[0].action, 'hover');
   assert.equal(result.steps[0].name, '新增');
