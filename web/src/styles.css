@@ -48,9 +48,9 @@
 .page-hero h1 {
   margin: 0;
   font-size: clamp(28px, 3vw, 36px);
-  line-height: 0.96;
+  line-height: 1.0;
   letter-spacing: 0;
-  font-weight: 900;
+  font-weight: 650;
 }
 
 .page-hero p {
@@ -1825,10 +1825,10 @@ legend {
 
 .home-workspace .page-hero p {
   max-width: 760px;
-  margin-top: 14px;
+  margin-top: 16px;
   color: #647c90;
-  font-size: 15px;
-  font-weight: 650;
+  font-size: 14px;
+  font-weight: 450;
   letter-spacing: 0.01em;
 }
 
